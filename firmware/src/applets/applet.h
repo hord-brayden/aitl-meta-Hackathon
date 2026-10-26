@@ -39,6 +39,7 @@ String uiText();                                // plain-text rendering of the c
 JsonArray uiArray();
 JsonObject onObject();
 size_t registerActions(JsonArray a);            // returns an index usable from LVGL user data
+void resetActions();                            // the renderer calls this before rebuilding a screen
 void runActionsAt(size_t idx);
 void runActions(JsonArray a);
 void markDirty();

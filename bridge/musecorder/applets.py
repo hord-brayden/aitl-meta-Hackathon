@@ -90,8 +90,19 @@ def _check_actions(actions: Any, where: str, errors: list[str], state_keys: set[
         errors.append(f"{where}: must be a list of actions"); return
     for n, act in enumerate(actions):
         w = f"{where}[{n}]"
-        if not isinstance(act, dict) or len(act) != 1:
-            errors.append(f"{w}: an action is an object with exactly one key (got {act!r})"); continue
+        if not isinstance(act, dict) or not act:
+            errors.append(f"{w}: an action is an object with one verb key (got {act!r})"); continue
+        if "if" in act:                                   # {"if": "${expr}", "then": [...], "else": [...]}
+            extra = set(act) - {"if", "then", "else"}
+            if extra:
+                errors.append(f"{w}: if takes only if/then/else (got {sorted(extra)})")
+            if not isinstance(act["if"], str):
+                errors.append(f"{w}: the if condition must be a template string")
+            for br in ("then", "else"):
+                if br in act: _check_actions(act[br], f"{w}.{br}", errors, state_keys)
+            continue
+        if len(act) != 1:
+            errors.append(f"{w}: an action is an object with exactly one verb key (got {sorted(act)})"); continue
         (verb, arg), = act.items()
         if verb not in ACTIONS:
             errors.append(f"{w}: unknown action {verb!r} (known: {', '.join(sorted(ACTIONS))})"); continue
@@ -115,7 +126,8 @@ def _check_actions(actions: Any, where: str, errors: list[str], state_keys: set[
         elif verb == "toast":
             if not isinstance(arg, (str, dict)): errors.append(f"{w}: toast takes text or {{text, error}}")
         elif verb == "led":
-            if arg not in LEDS: errors.append(f"{w}: led must be one of {', '.join(sorted(LEDS))}")
+            if not (arg in LEDS or (isinstance(arg, str) and "${" in arg)):
+                errors.append(f"{w}: led must be one of {', '.join(sorted(LEDS))} (or a template)")
         elif verb == "beep":
             if not isinstance(arg, dict): errors.append(f"{w}: beep takes {{freq, ms}}")
         elif verb in ("gpio.mode", "gpio.write", "gpio.read", "adc.read"):
@@ -149,11 +161,6 @@ def _check_actions(actions: Any, where: str, errors: list[str], state_keys: set[
             if not isinstance(arg, str) or not arg: errors.append(f"{w}: {verb} takes a string")
         elif verb == "notify":
             if not isinstance(arg, dict) or not (arg.get("title") or arg.get("text")): errors.append(f"{w}: notify takes {{title, text}}")
-        elif verb == "if":
-            if not isinstance(arg, dict) or not isinstance(arg.get("if"), str):
-                errors.append(f"{w}: if takes {{\"if\": \"${{expr}}\", \"then\": [], \"else\": []}}"); continue
-            for br in ("then", "else"):
-                if br in arg: _check_actions(arg[br], f"{w}.{br}", errors, state_keys)
         elif verb in ("save", "exit"):
             if arg is not True: errors.append(f"{w}: {verb} takes true")
         elif verb == "sleep":

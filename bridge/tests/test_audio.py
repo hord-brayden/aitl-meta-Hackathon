@@ -17,8 +17,8 @@ def test_adpcm_roundtrip_sine():
 
 
 def test_engine_pick(monkeypatch):
-    monkeypatch.setattr(stt, "available_engines", lambda: ["gemini"])
-    assert stt.pick({"engine": "auto"}) == "gemini"
+    monkeypatch.setattr(stt, "available_engines", lambda cfg=None: ["muse-cli"])
+    assert stt.pick({"engine": "auto"}) == "muse-cli"
     assert stt.pick({"engine": "mlx-whisper"}) == "mlx-whisper"
-    monkeypatch.setattr(stt, "available_engines", lambda: [])
+    monkeypatch.setattr(stt, "available_engines", lambda cfg=None: [])
     assert stt.pick({}) == "none"

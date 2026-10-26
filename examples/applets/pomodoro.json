@@ -7,7 +7,7 @@
   "persist": [ "minutes", "done" ],
   "ui": [
     { "type": "label", "text": "${hhmmss(left)}", "size": "xxl", "align": "center" },
-    { "type": "bar", "value": "${minutes * 60 - left}", "min": 0, "max": "${minutes * 60}", "color": "#3b82f6" },
+    { "type": "bar", "value": "${left}", "min": 0, "max": 3600, "color": "#3b82f6" },
     { "type": "row", "items": [
       { "type": "button", "text": "${running ? 'Pause' : 'Start'}", "style": "primary", "grow": 2, "do": [ { "toggle": "running" }, { "set": { "status": "${running ? 'focus' : 'paused'}" } } ] },
       { "type": "button", "text": "Reset", "do": [ { "event": "reset" } ] }

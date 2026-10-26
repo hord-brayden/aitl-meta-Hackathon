@@ -51,11 +51,12 @@ bool takeDirty() { bool d = s_dirty; s_dirty = false; return d; }
 JsonArray uiArray() { return s_doc ? (*s_doc)["ui"].as<JsonArray>() : JsonArray(); }
 JsonObject onObject() { return s_doc ? (*s_doc)["on"].as<JsonObject>() : JsonObject(); }
 size_t registerActions(JsonArray a) { s_actions.push_back(a); return s_actions.size() - 1; }
+void resetActions() { s_actions.clear(); }
 void runActionsAt(size_t idx) { if (idx < s_actions.size()) runActions(s_actions[idx]); }
 void onScreenShown(lv_obj_t* scr) { s_scr = scr; s_onScreen = true; }
 void keepAlive(bool on) { s_keepAlive = on; }
 void onScreenGone() {
-  s_onScreen = false; s_scr = nullptr; s_actions.clear();
+  s_onScreen = false; s_scr = nullptr;
   if (s_keepAlive) return;                          // a text entry screen is borrowing the display
   if (s_doc && !s_background) s_exitReq = true;     // tick() runs `stop` and unloads
 }

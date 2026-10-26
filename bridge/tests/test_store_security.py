@@ -9,7 +9,7 @@ from musecorder.chat_store import ChatStore
 
 def test_chat_store_roundtrip(tmp_path: Path):
     st = ChatStore(tmp_path)
-    c = st.new("claude-opus-5-5")
+    c = st.new("muse/muse-spark-1.3")
     c.messages += [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
     c.title = "hi"
     st.save(c)
@@ -24,7 +24,7 @@ def test_chat_store_roundtrip(tmp_path: Path):
 def test_registry_and_tokens(tmp_path: Path):
     reg = security.Registry(tmp_path / "devices.json")
     tok = security.new_token()
-    reg.add("DEV1", "AITL", tok, via="wifi")
+    reg.add("DEV1", "Musecorder", tok, via="wifi")
     assert reg.authenticate(tok).id == "DEV1"
     assert reg.authenticate("nope") is None
     raw = (tmp_path / "devices.json").read_text()

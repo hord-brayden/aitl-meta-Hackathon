@@ -42,7 +42,8 @@ static uint32_t colorFor(JsonObject w, uint32_t def) {
   if (st == "muted") return CO_MUTE; if (st == "accent" || st == "mono") return CO_CAERULEI; if (st == "warn") return CO_AMBER; if (st == "ok") return CO_PHOSPHOR; if (st == "error") return CO_RED;
   return def;
 }
-static void applyHidden(lv_obj_t* o, JsonObject w) { if (!w["hidden"].isNull()) { bool h = expr::renderTyped(R(w["hidden"]).c_str(), resolverCb, nullptr).truthy(); if (w["hidden"].is<const char*>()) h = expr::renderTyped(w["hidden"].as<const char*>(), resolverCb, nullptr).truthy(); else h = w["hidden"].as<bool>(); if (h) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); else lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN); } }
+static bool hiddenNow(JsonObject w) { JsonVariant h = w["hidden"]; if (h.isNull()) return false; if (h.is<const char*>()) return expr::renderTyped(h.as<const char*>(), resolverCb, nullptr).truthy(); return h.as<bool>(); }
+static void applyHidden(lv_obj_t* o, JsonObject w) { if (hiddenNow(w)) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); else lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN); }
 
 static void evBtn(lv_event_t* e) {
   uintptr_t ud = (uintptr_t)lv_event_get_user_data(e); size_t doIdx = ud & 0xFFFF, holdIdx = (ud >> 16) & 0xFFFF;
@@ -164,10 +165,13 @@ void refreshBindings() {
   }
 }
 
-static void evScrDeleted(lv_event_t*) { s_screen = nullptr; s_bind.clear(); onScreenGone(); }
+static void evScrDeleted(lv_event_t* e) {
+  if (lv_event_get_target(e) != s_screen) return;   // a previous screen being torn down after a rebuild: not ours any more
+  s_screen = nullptr; s_bind.clear(); onScreenGone();
+}
 static void evMenu(lv_event_t*) { ui::showApps(); }
 void buildScreen() {
-  s_bind.clear();
+  s_bind.clear(); resetActions();
   lv_obj_t* scr = newScreen();
   lv_obj_t* bar = statusBar(scr, "APP", runningName().c_str(), true);
   lv_obj_t* menu = lv_btn_create(bar); lv_obj_remove_style_all(menu); lv_obj_add_style(menu, &btn, 0); lv_obj_add_style(menu, &btnPressed, LV_STATE_PRESSED);
@@ -187,7 +191,7 @@ void buildScreen() {
 static void dumpList(JsonArray items, String& out, int depth) {
   for (JsonObject w : items) {
     String type = (const char*)(w["type"] | "label");
-    if (!w["hidden"].isNull()) { bool h = w["hidden"].is<const char*>() ? expr::renderTyped(w["hidden"].as<const char*>(), resolverCb, nullptr).truthy() : w["hidden"].as<bool>(); if (h) continue; }
+    if (hiddenNow(w)) continue;
     if (type == "row") { out += "[row] "; String inner; dumpList(w["items"].as<JsonArray>(), inner, depth + 1); inner.replace("\n", " | "); out += inner; out += "\n"; continue; }
     out += "["; out += type; String st = R(w["style"]); String sz = R(w["size"]); if (st.length()) out += " " + st; if (sz.length()) out += " " + sz; out += "] ";
     if (type == "label" || type == "value" || type == "button") out += R(w["text"]);

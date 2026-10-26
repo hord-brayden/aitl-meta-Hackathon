@@ -1,30 +1,110 @@
-# aitl bridge
+# Musecorder bridge
 
-```
-aitl serve [--wifi] [--port auto|/dev/cu.usbserial-110|off] [--allow-pairing 180]
-aitl keys  list | set <provider> | rm <provider>       # anthropic gemini openai openrouter muse …
-aitl models                                            # catalog with ● ready / ○ missing key
-aitl doctor                                            # ports, keys, TLS, providers
-aitl provision --ssid NAME [--password …] [--bridge] [--host IP]   # over USB
-aitl pair [--seconds 180]                              # serve + Wi-Fi + pairing window
-aitl devices [list | revoke <id>]
-aitl chats list | import <file> | import-claude-code [latest] [--project X]
-aitl hooks install | uninstall | status          # Claude Code permission prompts -> device
-aitl set <key> <value>  ·  aitl status           # device settings through the running bridge
-aitl serve --ble  ·  aitl logs -f  ·  aitl stop  # Bluetooth mode runs as AITL Bridge.app in the background
-aitl install-app                                 # (re)build the app bundle + private runtime in ~/.config/aitl
-aitl autostart on | off | status                 # LaunchAgent: bridge at login, kept alive
-aitl ble-scan                                    # what the bridge's Bluetooth radio sees (debug)
+The Mac half of Musecorder: links the ESP32 "CYD" device (USB serial, Wi-Fi WebSocket or Bluetooth) to Meta Muse
+(Model API), Muse Code (sessions + tool approvals on the device), macOS automation (typing, dictation, media,
+notifications) and the **applet relay** that lets Muse re-program the device with JSON applets on demand.
+
+## Install
+
+```sh
+cd bridge
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e ".[discovery]" --config-settings editable_mode=compat   # add ,dev for pytest; ,ble for Bluetooth; ,stt for Whisper
+# (compat mode: the default editable hook fails to import outside the repo when the checkout path has spaces or "+")
+musecorder doctor                      # ports, keys, TLS, muse CLI, model catalog
 ```
 
-`[stt]` picks the speech engine for device-mic dictation: `engine = "auto"` uses `mlx-whisper` when installed
-(`pip install mlx-whisper`, local and free on Apple Silicon), else Gemini with your key.
+Requires Python 3.10+, the `muse` CLI (`pip install muse-code` / see dev.meta.ai) on PATH or in `~/.local/bin`
+for Muse Code features, and `muse login` for a live model.
 
-Config: `~/.config/aitl/config.toml` (created on first run). Edit `[[actions]]` to add one-tap prompts
-(`kind = "clipboard"` shows the answer, `"clipboard_type"` also types it into the Mac, `"ask_voice"` dictates a question).
-`[providers.openai_compatible]` entries take any OpenAI-style endpoint: set `base_url` and `key_env`.
-Meta Muse Spark is pre-declared as `muse`; fill in its `base_url` when Meta publishes an API endpoint.
+## Run
 
-Providers: `claude-code/*` (Claude Agent SDK, uses your Claude Code login, each AITL chat resumes its own Claude Code session), `claude-*` (Anthropic API key), `gemini-*`, `ollama/*`, `<name>/*` OpenAI-compatible.
+```sh
+musecorder serve                       # USB; --wifi, --ble, --allow-pairing 180 as needed
+musecorder status                      # devices linked to the running bridge
+musecorder set brightness 200          # device settings (musecorder set with no args lists keys)
+musecorder pair                        # Wi-Fi: serve + pairing window
+musecorder provision --ssid NAME --bridge   # push Wi-Fi + bridge credentials over USB
+```
 
-Tests: `python -m pytest -q`. Logs: `aitl -v serve`.
+Config: `~/.config/musecorder/config.toml` (created on first run). `[providers.muse_code]` sets the `muse` binary,
+workspace, permission profile and approval wait; `[applets]` caps `net.http` (timeout 15 s, body 2000 chars,
+2 req/s) and `ai.ask` tokens; `[[actions]]` are the one-tap prompts on the device.
+
+## Models and keys
+
+| model id on the device | backed by | needs |
+|---|---|---|
+| `muse/muse-spark-1.3` (default), `muse/muse-spark-1.2` | Meta Model API `https://api.meta.ai/v1` | `META_API_KEY` or `musecorder keys set muse` (Keychain) |
+| `muse-code/default` | Muse Code via `muse serve` + `muse-code-sdk` (falls back to `muse exec --json`) | `muse login` |
+| `ollama/*` | local Ollama | `ollama serve` |
+| `openai/*`, `openrouter/*`, custom `[[providers.openai_compatible]]` | any OpenAI-style endpoint | their key env |
+
+Keys come from the environment first, then the macOS Keychain. Never paste a key into a chat or a file; if one
+leaks, rotate it. Each device chat on `muse-code/*` is its own Muse Code session (resumed by id); tool approvals
+show up on the device as Allow / Deny cards. The device's session picker (`cc.list`) lists Muse Code sessions.
+
+Speech-to-text for device-mic dictation (`[stt] engine`): `mlx-whisper` if installed (local), else `muse-cli`
+(`muse voice transcribe`), else `muse-api` (Model API `muse-voice-transcribe-1.0`; request body shape still TODO).
+
+## Muse Code integration
+
+```sh
+musecorder muse-setup
+```
+
+writes `mcpServers.musecorder` (stdio, command `<venv>/bin/musecorder-mcp`) into `~/.config/muse/settings.json`
+(backing the file up first, keeping everything else) and copies the skill `.agents/skills/musecorder` to
+`~/.agents/skills/musecorder/`. The same skill is picked up as a project skill when Muse Code runs inside this
+repo. Restart Muse Code, keep `musecorder serve` running, and ask: "build a door counter on the Musecorder".
+
+Manual registration, if you prefer:
+
+```json
+{ "schema_version": 1,
+  "mcpServers": { "musecorder": { "transport": "stdio", "command": "/path/to/bridge/.venv/bin/musecorder-mcp", "args": [] } } }
+```
+
+MCP tools (`musecorder-mcp`, stdio): `device_status`, `applet_spec`, `applet_validate`, `applet_install(json, open)`,
+`applet_list`, `applet_remove`, `applet_open`, `applet_close`, `applet_state_get`, `applet_state_set(id, state_json)`,
+`applet_event(id, name)`, `applet_screen`, `applet_log(id)`, `device_type_text`, `device_key`, `device_set`.
+Each is a thin wrapper over the loopback admin routes below and returns the device's reply as JSON.
+
+## Applets from the command line
+
+```sh
+musecorder applet validate ../examples/applets/*.json      # schema check, no device needed
+musecorder applet install ../examples/applets/dice.json --open
+musecorder applet list | ui | close
+musecorder applet state dice                              # read state
+musecorder applet state dice face=6 rolls=0               # merge state (on/off/ints parsed)
+musecorder applet event dice roll
+musecorder applet log dice                                # device ring + bridge-kept lines
+musecorder applet remove dice
+```
+
+Documents over ~5 KB are chunked over the link (`applet.put` x N then `applet.install`); every frame stays under 6 KB.
+
+Admin routes on `127.0.0.1:7778` (loopback only): `GET /admin/status|get|probe`, `POST /admin/set|type|key|provision|pair_open`,
+`POST /admin/applet/install|remove|open|close|state|event`, `GET /admin/applet/list|ui|state?id=|log?id=`.
+
+## Tests
+
+```sh
+pip install -e ".[dev]" && python -m pytest -q
+```
+
+## Troubleshooting
+
+- **"bridge not reachable on 127.0.0.1:7778"**: `musecorder serve` is not running (or runs in another user session).
+- **"no device linked"**: the device must show USB/Wi-Fi green; check `musecorder doctor` for the serial port
+  (CH340 driver) and that nothing else (a serial monitor) holds the port.
+- **"device did not answer with applet.ack"**: the firmware rejected or never received the document; run
+  `musecorder -v serve` to see frames, and `musecorder applet validate` first.
+- **Muse Code model not ready**: `muse login`, then `musecorder models`. For offline testing set
+  `providers.muse_code.provider = "echo"` in config.toml (the echo provider answers without credentials).
+- **Meta Muse model not ready**: `musecorder keys set muse` or export `META_API_KEY`.
+- **Typing / key presses blocked**: grant Accessibility to your terminal (or `~/.config/musecorder/Musecorder Bridge.app`
+  when running as the background app) in System Settings > Privacy & Security.
+- **Bluetooth**: `musecorder serve --ble` runs as `Musecorder Bridge.app`; `musecorder logs -f`, `musecorder stop`.
+- Verbose: `musecorder -v serve`. Auth headers in `net.http` are masked in logs; bodies are capped at 2000 chars.
