@@ -51,17 +51,26 @@ static void doRemoveApplets() { for (auto& a : applets::list()) applets::remove(
 static void cbRemoveApplets(lv_event_t*) { confirm("Remove all applets?", "Every installed applet and its saved state is erased.", doRemoveApplets); }
 static void cbClearAutostart(lv_event_t*) { for (auto& a : applets::list()) if (a.autostart) applets::setAutostart(a.id, false); toast("Boots to the home screen"); showSettings(); }
 
-void showSettings() {
-  lv_obj_t* scr = newScreen(); statusBar(scr, "", "Settings", true);
-  lv_obj_t* list = scrollList(scr);
-  lv_obj_t* L = list, *R = list;
-  if (big()) {   // two columns of cards inside the scrolling list
-    lv_obj_t* row2 = lv_obj_create(list); lv_obj_remove_style_all(row2); lv_obj_set_size(row2, LV_PCT(100), LV_SIZE_CONTENT); lv_obj_set_flex_flow(row2, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(row2, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START); lv_obj_set_style_pad_column(row2, 12, 0);
-    auto col = [&]() { lv_obj_t* c = lv_obj_create(row2); lv_obj_remove_style_all(c); lv_obj_set_flex_grow(c, 1); lv_obj_set_height(c, LV_SIZE_CONTENT); lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN); lv_obj_set_style_pad_row(c, 12, 0); lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE); return c; };
-    L = col(); R = col();
+// Settings is a menu of sections; each section is its own light screen (a few rows), so even with a radio
+// stack resident there is heap to spare, and 480-wide boards get one calm column instead of a wall of rows.
+static int s_section = -1;
+static const char* kSectionNames[] = {"Connection", "Bluetooth", "Voice", "Display", "Touch", "Apps", "Storage", "About"};
+static const char* kSectionIcons[] = {LV_SYMBOL_USB, LV_SYMBOL_BLUETOOTH, LV_SYMBOL_AUDIO, LV_SYMBOL_IMAGE, LV_SYMBOL_EDIT, LV_SYMBOL_LIST, LV_SYMBOL_SD_CARD, LV_SYMBOL_SETTINGS};
+static String sectionSummary(int i) {
+  switch (i) {
+    case 0: return app::bridgeLinked() ? "Linked over " + app::linkSummary() : (g_settings.wifiEnabled ? bridge::wifiStatus() : String("USB, Wi-Fi off"));
+    case 1: return g_settings.bleEnabled ? blehid::status() : String("off");
+    case 2: return g_settings.dictSource == 1 ? "Device mic" : "Host Mac dictation";
+    case 3: { char b[24]; snprintf(b, sizeof(b), "Brightness %u%%", (unsigned)(g_settings.brightness * 100 / 255)); return b; }
+    case 4: return "Calibrate, test";
+    case 5: { char b[24]; snprintf(b, sizeof(b), "%u installed", (unsigned)applets::list().size()); return b; }
+    case 6: return sdInfo();
+    default: return "Musecorder " AITL_FW_VERSION;
   }
-
-  lv_obj_t* c = sectionCard(L, "Connection");
+}
+static void buildSection(lv_obj_t* c, int i) {
+  switch (i) {
+    case 0: {
   addAction(c, "USB link", app::bridgeLinked() && app::linkSummary() == "USB" ? app::bridgeName.c_str() : "plug in, run musecorder serve", nullptr, nullptr);
   addSwitch(c, "Wi-Fi", g_settings.wifiEnabled, cbWifi, nullptr);
   addAction(c, "Network", bridge::wifiStatus().c_str(), cbSsid, nullptr);
@@ -69,49 +78,49 @@ void showSettings() {
   addAction(c, "Bridge", bridge::bridgeStatus().c_str(), nullptr, nullptr);
   addAction(c, "Pair over network", bridge::hasBridgeCert() ? "paired (re-pair)" : "start", cbPair, nullptr);
   if (bridge::hasBridgeCert()) addAction(c, "Forget bridge", "", cbForget, nullptr);
-
-  c = sectionCard(R, "Bluetooth");
+      break; }
+    case 1: {
   addSwitch(c, big() ? "Keyboard" : "Bluetooth keyboard", g_settings.bleEnabled, cbBle, nullptr);
   addAction(c, "Status", blehid::status().c_str(), nullptr, nullptr);
   addDropdown(c, "Keystrokes via", "Bridge (USB/Wi-Fi)\nBluetooth HID", g_settings.hidTarget, cbHidTarget, nullptr);
   addDropdown(c, "BLE dictation key", "Right Cmd x2\nCtrl x2\nF5\nCmd+Opt+D", g_settings.dictShortcut, cbDictSc, nullptr);
   addSwitch(c, big() ? "Bridge link" : "Bridge link over BLE", g_settings.bleLink, cbBleLink, nullptr);
-
-  c = sectionCard(L, "Voice");
+      break; }
+    case 2: {
   addDropdown(c, "Microphone", "Host Mac\nDevice mic (P3)", g_settings.dictSource, cbDictSrc, nullptr);
   addDropdown(c, "Device mic sends to", "Ask Muse\nType into Mac", g_settings.dictTarget, cbDictTgt, nullptr);
   addSlider(c, "Mic gain", 1, 8, g_settings.micGain, cbMicGain, nullptr);
   addAction(c, "Mic test", "", cbMicTest, nullptr);
-
-  c = sectionCard(R, "Display");
+      break; }
+    case 3: {
   addSlider(c, "Brightness", 10, 255, g_settings.brightness, cbBright, nullptr);
   { static const uint16_t v[] = {10, 30, 60, 120, 300, 600, 0}; uint16_t sel = 3; for (int i = 0; i < 7; i++) if (v[i] == g_settings.screenTimeout) sel = i;
     addDropdown(c, "Dim after", "10 s\n30 s\n1 min\n2 min\n5 min\n10 min\nNever", sel, cbTimeout, nullptr); }
   addDropdown(c, "Rotation", "Portrait\nLandscape A\nPortrait flipped\nLandscape B", g_settings.rotation & 3, cbRotate, nullptr);
   addSwitch(c, "Invert colors", g_settings.invertColors, cbInvert, nullptr);
   addSwitch(c, "Swap red and blue", g_settings.bgrOrder, cbBgr, nullptr);
-
-  c = sectionCard(R, "Touch");
+      break; }
+    case 4: {
   addAction(c, "Calibrate touch", "", cbCal, nullptr);
   addAction(c, "Touch test", "draw", cbTouchTest, nullptr);
   { static const uint16_t v[] = {250, 400, 600, 900}; uint16_t sel = 1; for (int i = 0; i < 4; i++) if (v[i] == g_settings.longPressMs) sel = i;
     addDropdown(c, "Long-press time", "250 ms\n400 ms\n600 ms\n900 ms", sel, cbLongPress, nullptr); }
   addDropdown(c, "Sensitivity", "Instant\nNormal\nFirm\nDeliberate", g_settings.touchDebounce - 1, cbDebounce, nullptr);
   addSwitch(c, "LED flash on tap", g_settings.hapticLed, cbTapLed, nullptr);
-
-  c = sectionCard(L, "Apps");
+      break; }
+    case 5: {
   { auto apps = applets::list(); String auto_; for (auto& a : apps) if (a.autostart) auto_ = a.name;
     char n[40]; snprintf(n, sizeof(n), "%u installed", (unsigned)apps.size()); addAction(c, "Applets", n, cbApps, nullptr);
     addAction(c, "Running", applets::running() ? applets::runningName().c_str() : "none", nullptr, nullptr);
     addAction(c, "Open on boot", auto_.length() ? auto_.c_str() : "off", auto_.length() ? cbClearAutostart : nullptr, nullptr);
     { size_t tot = LittleFS.totalBytes(), used = LittleFS.usedBytes(); char f[40]; snprintf(f, sizeof(f), "%u KB free of %u", (unsigned)((tot - used) / 1024), (unsigned)(tot / 1024)); addAction(c, "Storage", f, nullptr, nullptr); }
     if (!apps.empty()) addAction(c, "Remove all applets", "", cbRemoveApplets, nullptr); }
-
-  c = sectionCard(L, "Storage");
+      break; }
+    case 6: {
   addAction(c, "microSD", sdInfo().c_str(), nullptr, nullptr);
   addSwitch(c, "Log chats to microSD", g_settings.sdLog, cbSdLog, nullptr);
-
-  c = sectionCard(R, "About");
+      break; }
+    case 7: {
   addAction(c, "Firmware", "Musecorder " AITL_FW_VERSION " / " AITL_BOARD_NAME, nullptr, nullptr);
   addAction(c, "Device ID", app::deviceId().c_str(), nullptr, nullptr);
   { String b = app::bridgeName.length() ? app::bridgeName + " " + app::bridgeVersion : String("none"); addAction(c, "Bridge", b.c_str(), nullptr, nullptr); }
@@ -122,6 +131,42 @@ void showSettings() {
   addAction(c, "Run setup again", "", cbWizard, nullptr);
   addAction(c, "Restart", "", cbReboot, nullptr);
   addAction(c, "Factory reset", "", cbReset, nullptr);
+      break; }
+    default: break;
+  }
+}
+static void evSection(lv_event_t* e) { s_section = (int)(uintptr_t)lv_event_get_user_data(e); showSettings(); }
+static void evSectionsBack(lv_event_t*) { s_section = -1; showSettings(); }
+void showSettingsRoot() { s_section = -1; showSettings(); }
+void showSettingsSection(int i) { s_section = (i >= 0 && i < 8) ? i : -1; showSettings(); }
+void showSettings() {
+  lv_obj_t* scr = newScreen();
+  if (s_section < 0) {
+    statusBar(scr, "", "Settings", true);
+    lv_obj_t* list = scrollList(scr);
+    lv_obj_t* grid = lv_obj_create(list); lv_obj_remove_style_all(grid); lv_obj_set_size(grid, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP); lv_obj_set_style_pad_gap(grid, big() ? 10 : 6, 0);
+    for (int i = 0; i < 8; i++) {
+      lv_obj_t* b = lv_btn_create(grid); lv_obj_remove_style_all(b); lv_obj_add_style(b, &card, 0); lv_obj_add_style(b, &pressed, LV_STATE_PRESSED);
+      lv_obj_set_width(b, big() ? LV_PCT(49) : LV_PCT(100)); lv_obj_set_height(b, LV_SIZE_CONTENT); lv_obj_set_style_pad_all(b, big() ? 12 : 10, 0);
+      lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(b, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_column(b, big() ? 12 : 10, 0);
+      lv_obj_t* ic = makeLabel(b, kSectionIcons[i], &body); lv_obj_set_style_text_color(ic, lv_color_hex(MU_TEAL), 0); lv_obj_set_style_text_font(ic, big() ? &lv_font_montserrat_20 : &lv_font_montserrat_16, 0);
+      lv_obj_t* col = lv_obj_create(b); lv_obj_remove_style_all(col); lv_obj_set_flex_grow(col, 1); lv_obj_set_height(col, LV_SIZE_CONTENT); lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN); lv_obj_set_style_pad_row(col, 1, 0);
+      lv_obj_t* t = makeLabel(col, kSectionNames[i], &body); lv_obj_set_width(t, LV_PCT(100)); lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
+      lv_obj_t* sm = makeLabel(col, sectionSummary(i).c_str(), &caption); lv_obj_set_width(sm, LV_PCT(100)); lv_label_set_long_mode(sm, LV_LABEL_LONG_DOT);
+      lv_obj_t* ch = makeLabel(b, LV_SYMBOL_RIGHT, &caption); lv_obj_set_style_text_color(ch, lv_color_hex(MU_DIM), 0);
+      lv_obj_add_event_cb(b, evSection, LV_EVENT_CLICKED, (void*)(uintptr_t)i);
+    }
+    load(scr); return;
+  }
+  // one section: custom bar (back returns to the menu, not home)
+  lv_obj_t* bar = lv_obj_create(scr); lv_obj_remove_style_all(bar); lv_obj_set_size(bar, LV_PCT(100), chipH() + 8);
+  lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_column(bar, 8, 0);
+  lv_obj_t* bk = makeIconButton(bar, LV_SYMBOL_LEFT, chipH() + 8, evSectionsBack); lv_obj_set_ext_click_area(bk, 10);
+  lv_obj_t* t = makeLabel(bar, kSectionNames[s_section], &title); lv_obj_set_style_text_font(t, big() ? &lv_font_montserrat_24 : &lv_font_montserrat_18, 0); lv_obj_set_flex_grow(t, 1);
+  lv_obj_t* list = scrollList(scr);
+  lv_obj_t* c = makeCard(list); lv_obj_set_style_pad_row(c, 0, 0); lv_obj_set_width(c, LV_PCT(100));
+  buildSection(c, s_section);
   load(scr);
 }
 

@@ -12,6 +12,8 @@ namespace ui {
   void showActions();
   void showCompose(int target);       // 0 = AI, 1 = Mac keyboard
   void showSettings();
+  void showSettingsRoot();
+  void showSettingsSection(int i);     // 0 Connection … 7 About (ui.show "settings:3")            // the section menu (showSettings reopens the last section after a change)
   void showCalibrate(bool fromWizard);
   void showTouchTest();
   void showSetupWizard();

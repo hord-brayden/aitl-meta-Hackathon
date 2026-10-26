@@ -317,7 +317,7 @@ static void onMessage(JsonDocument& d, bridge::Transport from) {
   } else if (!strcmp(t, "ui.show")) {   // host-driven navigation (screenshots, demos)
     const char* sc = d["screen"] | "home"; bool ok = true;
     if (!strcmp(sc, "home")) ui::showHome(); else if (!strcmp(sc, "boot")) ui::showBoot(); else if (!strcmp(sc, "apps")) ui::showApps(); else if (!strcmp(sc, "applet")) ui::showApplet();
-    else if (!strcmp(sc, "settings")) ui::showSettings(); else if (!strcmp(sc, "models")) ui::showModels(); else if (!strcmp(sc, "chats")) ui::showChats();
+    else if (!strcmp(sc, "settings")) ui::showSettingsRoot(); else if (!strncmp(sc, "settings:", 9)) ui::showSettingsSection(atoi(sc + 9)); else if (!strcmp(sc, "models")) ui::showModels(); else if (!strcmp(sc, "chats")) ui::showChats();
     else if (!strcmp(sc, "actions")) ui::showActions(); else if (!strcmp(sc, "compose")) ui::showCompose(0); else if (!strcmp(sc, "inbox")) ui::showInbox();
     else if (!strcmp(sc, "wizard")) ui::showSetupWizard(); else if (!strcmp(sc, "calibrate")) ui::showCalibrate(false); else if (!strcmp(sc, "touchtest")) ui::showTouchTest();
     else ok = false;

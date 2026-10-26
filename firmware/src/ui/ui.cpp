@@ -269,7 +269,7 @@ static void evChats(lv_event_t*) { showChats(); }
 static void evDict(lv_event_t*) { app::dictation("toggle"); }
 static void evType(lv_event_t*) { showCompose(0); }
 static void evApps(lv_event_t*) { showApps(); }
-static void evSettings(lv_event_t*) { showSettings(); }
+static void evSettings(lv_event_t*) { showSettingsRoot(); }
 static void evStop(lv_event_t*) { app::stopGeneration(); }
 static void evPaste(lv_event_t*) { app::pasteLastReply(); toast("Typing the reply into the Mac"); }
 static void evCopy(lv_event_t*) { app::copyLastReply(); toast("Copied to the Mac clipboard"); }
