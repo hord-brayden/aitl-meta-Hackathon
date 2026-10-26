@@ -14,11 +14,15 @@ else:  # pragma: no cover
     import tomli as tomllib
 import tomli_w
 
-CONFIG_DIR = Path(os.environ.get("MUSECORDER_HOME", Path.home() / ".config" / "aitl"))
+CONFIG_DIR = Path(os.environ.get("MUSECORDER_HOME", Path.home() / ".config" / "musecorder"))
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 CHATS_DIR = CONFIG_DIR / "chats"
 TLS_DIR = CONFIG_DIR / "tls"
 DEVICES_FILE = CONFIG_DIR / "devices.json"
+
+MUSE_API_BASE = "https://api.meta.ai/v1"
+MUSE_MODELS = ["muse-spark-1.3", "muse-spark-1.2"]
+MUSE_VOICE_MODEL = "muse-voice-transcribe-1.0"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "bridge": {
@@ -30,33 +34,51 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "wifi_mode": "signed",      # "signed" (HMAC frames; fits a classic ESP32) | "tls" (pinned cert; needs PSRAM)
         "ble": False,               # link over Bluetooth (Nordic UART) too; needs `pip install bleak`
         "bind": "0.0.0.0",
-        "discovery": True,          # advertise _aitl._tcp via mDNS when zeroconf is installed
-        "default_model": "claude-code/default",   # Claude via your Claude Code login; no API key
+        "discovery": True,          # advertise the bridge via mDNS when zeroconf is installed
+        "default_model": "muse/muse-spark-1.3",   # Meta Model API; needs META_API_KEY (musecorder keys set muse)
         "system_prompt": (
-            "You are AITL, a hardware AI companion built by Caeruli Obscuri Laboratorium. "
+            "You are Musecorder, a hardware AI companion running on a small ESP32 touchscreen device. "
             "You are shown on a 2.8-inch screen, so answer tightly: lead with the answer, plain text, "
             "no markdown tables or headers, short paragraphs. Expand only when asked."
         ),
         "max_output_tokens": 2048,
         "title_model": "",          # model used to title chats; empty = same as the chat's model
     },
-    "stt": {"engine": "auto", "whisper_model": "mlx-community/whisper-base-mlx", "gemini_model": "gemini-flash-latest", "language": "en"},
+    "stt": {
+        "engine": "auto",           # auto | mlx-whisper | muse-cli | muse-api | none
+        "whisper_model": "mlx-community/whisper-base-mlx",
+        "muse_bin": "muse",         # `muse voice transcribe` (needs `muse login`)
+        "language": "en",
+    },
     "hid": {
         "typing_method": "paste",   # "paste" (clipboard + Cmd-V, Unicode-safe) | "keystroke"
         "restore_clipboard": True,
         "dictation": "menu",        # "menu" (Edit > Start Dictation) | "shortcut"
-        "dictation_shortcut": "ctrl ctrl",  # fallback when the app has no Edit > Start Dictation: "ctrl ctrl" | "rcmd rcmd" | "f5" (match System Settings > Keyboard > Dictation)
+        "dictation_shortcut": "ctrl ctrl",  # fallback when the app has no Edit > Start Dictation: "ctrl ctrl" | "rcmd rcmd" | "f5"
         "notify": True,             # macOS notification on first HID action per session
     },
+    "applets": {
+        "http_timeout": 15,         # hard cap for net.http (seconds)
+        "http_max_body": 2000,      # characters of response body relayed to the device
+        "http_rate": 2,             # net.http requests per second per device
+        "ai_max_tokens": 512,       # ai.ask answers are short: they land on a 2.8-inch screen
+    },
     "providers": {
-        "claude_code": {"enabled": True, "models": ["default", "opus", "sonnet", "haiku"], "effort": ""},
-        "anthropic": {"enabled": True, "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"], "live_list": False},
-        "gemini": {"enabled": True, "models": ["gemini-flash-latest", "gemini-pro-latest", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"], "live_list": True},
+        "muse_code": {
+            "enabled": True,
+            "muse_bin": "",             # empty = `muse` on PATH or ~/.local/bin/muse
+            "models": ["default"],      # "default" = Muse Code's configured model; add ids to offer more
+            "provider": "",             # "" = Muse Code's configured provider; "echo" for offline testing
+            "workspace": "",            # directory device chats run in; empty = ~/.config/musecorder/muse-workspace
+            "permission_profile": "",   # e.g. ":ask-me"; empty = host default (approvals come to the device)
+            "approval_wait": 75,        # seconds to wait for Allow/Deny on the device before denying
+            "reasoning_effort": "",     # none|minimal|low|medium|high|xhigh|max|ultra; empty = host default
+        },
         "ollama": {"enabled": True, "base_url": "http://127.0.0.1:11434", "models": [], "live_list": True},
         "openai_compatible": [
+            {"name": "muse", "label": "Meta Muse", "base_url": MUSE_API_BASE, "key_env": "META_API_KEY", "models": list(MUSE_MODELS)},
             {"name": "openai", "label": "OpenAI", "base_url": "https://api.openai.com/v1", "key_env": "OPENAI_API_KEY", "models": ["gpt-5", "gpt-5-mini"]},
             {"name": "openrouter", "label": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY", "models": ["meta-llama/llama-4-maverick", "google/gemma-3-27b-it"]},
-            {"name": "muse", "label": "Meta Muse Spark", "base_url": "", "key_env": "MUSE_API_KEY", "models": ["muse-spark"]},
         ],
     },
     "actions": [
@@ -94,7 +116,7 @@ def load() -> dict[str, Any]:
     ensure_dirs()
     if not CONFIG_FILE.exists():
         save(DEFAULT_CONFIG)
-        return dict(DEFAULT_CONFIG)
+        return _deep_merge({}, DEFAULT_CONFIG)
     with CONFIG_FILE.open("rb") as f:
         user = tomllib.load(f)
     cfg = _deep_merge(DEFAULT_CONFIG, user)

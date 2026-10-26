@@ -42,7 +42,7 @@ namespace app {
   void setModel(const String& id);
   void runAction(const String& id);
   void refreshLists();
-  void listSessions();              // ask the bridge for recent Claude Code sessions
+  void listSessions();              // ask the bridge for recent Muse Code sessions
   void openSession(const String& id);
   void replyAlert(const char* action);  // "allow" | "deny" | "dismiss"
   void inboxMarkRead();

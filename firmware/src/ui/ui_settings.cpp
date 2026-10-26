@@ -24,12 +24,12 @@ static void cbDebounce(lv_event_t* e) { g_settings.touchDebounce = 1 + lv_dropdo
 static void cbTapLed(lv_event_t* e) { g_settings.hapticLed = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED); settingsSave(); }
 static void cbSdLog(lv_event_t* e) { g_settings.sdLog = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED); settingsSave(); }
 static void cbWifi(lv_event_t* e) { g_settings.wifiEnabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED); settingsSave(); toast(g_settings.wifiEnabled ? "Wi-Fi on: restarting (Bluetooth parks while Wi-Fi is on)" : "Wi-Fi off: restarting"); lv_timer_handler(); delay(900); ESP.restart(); }
-static void cbBle(lv_event_t* e) { g_settings.bleEnabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED); settingsSave(); if (g_settings.bleEnabled && !g_settings.wifiEnabled) blehid::begin(); else blehid::end(); toast(!g_settings.bleEnabled ? "Bluetooth off" : g_settings.wifiEnabled ? "Saved. Bluetooth starts when Wi-Fi is off (not enough RAM for both)." : "Advertising as 'AITL Keyboard'"); }
+static void cbBle(lv_event_t* e) { g_settings.bleEnabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED); settingsSave(); if (g_settings.bleEnabled && !g_settings.wifiEnabled) blehid::begin(); else blehid::end(); toast(!g_settings.bleEnabled ? "Bluetooth off" : g_settings.wifiEnabled ? "Saved. Bluetooth starts when Wi-Fi is off (not enough RAM for both)." : "Advertising as 'Musecorder Keyboard'"); }
 static void cbHidTarget(lv_event_t* e) { g_settings.hidTarget = lv_dropdown_get_selected(lv_event_get_target(e)); settingsSave(); }
 static void cbDictSrc(lv_event_t* e) { g_settings.dictSource = lv_dropdown_get_selected(lv_event_get_target(e)); settingsSave(); }
 static void cbDictTgt(lv_event_t* e) { g_settings.dictTarget = lv_dropdown_get_selected(lv_event_get_target(e)); settingsSave(); }
 static void cbMicGain(lv_event_t* e) { g_settings.micGain = lv_slider_get_value(lv_event_get_target(e)); settingsSave(); }
-static void cbBleLink(lv_event_t* e) { g_settings.bleLink = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED); settingsSave(); if (g_settings.bleEnabled) { blehid::end(); blehid::begin(); } toast(g_settings.bleLink ? "BLE link on: run aitl serve --ble" : "BLE link off"); }
+static void cbBleLink(lv_event_t* e) { g_settings.bleLink = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED); settingsSave(); if (g_settings.bleEnabled) { blehid::end(); blehid::begin(); } toast(g_settings.bleLink ? "BLE link on: run musecorder serve --ble" : "BLE link off"); }
 static void cbMicTest(lv_event_t*);
 static void cbDictSc(lv_event_t* e) { g_settings.dictShortcut = lv_dropdown_get_selected(lv_event_get_target(e)); settingsSave(); }
 static void ssidDone(const char* v) { strlcpy(g_settings.wifiSsid, v, sizeof(g_settings.wifiSsid)); settingsSave(); showTextEntry("WI-FI PASSWORD", g_settings.wifiPass, true, [](const char* p) { strlcpy(g_settings.wifiPass, p, sizeof(g_settings.wifiPass)); g_settings.wifiEnabled = true; settingsSave(); bridge::wifiApply(); showSettings(); }); }
@@ -50,7 +50,7 @@ void showSettings() {
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN); lv_obj_set_style_pad_row(list, 3, 0); lv_obj_set_scroll_dir(list, LV_DIR_VER); lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
 
   sectionLabel(list, "CONNECTION");
-  addAction(list, "USB link", app::bridgeLinked() && app::linkSummary() == "USB" ? app::bridgeName.c_str() : "plug in + run aitl serve", nullptr, nullptr);
+  addAction(list, "USB link", app::bridgeLinked() && app::linkSummary() == "USB" ? app::bridgeName.c_str() : "plug in + run musecorder serve", nullptr, nullptr);
   addSwitch(list, "Wi-Fi", g_settings.wifiEnabled, cbWifi, nullptr);
   addAction(list, "Network", bridge::wifiStatus().c_str(), cbSsid, nullptr);
   { String h = g_settings.bridgeHost[0] ? String(g_settings.bridgeHost) + ":" + g_settings.bridgePort : String("not set"); addAction(list, "Bridge host", h.c_str(), cbHost, nullptr); }
@@ -243,7 +243,7 @@ static void pairYes(lv_event_t*) { app::confirmPairing(true); showSettings(); }
 static void pairNo(lv_event_t*) { app::confirmPairing(false); showSettings(); }
 void showPairing() {
   lv_obj_t* scr = newScreen(); statusBar(scr, "07", "PAIR BRIDGE", false);
-  lv_obj_t* b = makeLabel(scr, "A bridge wants to pair. Confirm that BOTH values match what `aitl serve` printed on your Mac:", &body);
+  lv_obj_t* b = makeLabel(scr, "A bridge wants to pair. Confirm that BOTH values match what `musecorder serve` printed on your Mac:", &body);
   lv_obj_set_width(b, LV_PCT(100)); lv_label_set_long_mode(b, LV_LABEL_LONG_WRAP); lv_obj_set_style_text_font(b, &lv_font_montserrat_12, 0);
   lv_obj_t* box = lv_obj_create(scr); lv_obj_remove_style_all(box); lv_obj_add_style(box, &panel, 0); lv_obj_set_size(box, LV_PCT(100), LV_SIZE_CONTENT); lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
   lv_obj_t* n = makeLabel(box, app::pairName.c_str(), &mono); lv_obj_set_style_text_color(n, lv_color_hex(CO_ASH), 0);

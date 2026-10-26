@@ -67,7 +67,7 @@ class SrvCb : public NimBLEServerCallbacks {
 
 void begin() {
   if (s_started) return;
-  NimBLEDevice::init("AITL Keyboard");
+  NimBLEDevice::init("Musecorder Keyboard");
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
   NimBLEDevice::setSecurityAuth(true, false, true);  // bonding, no MITM (no display pin), secure connections
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
@@ -94,12 +94,12 @@ void begin() {
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   NimBLEAdvertisementData advData; advData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
   advData.setAppearance(HID_KEYBOARD); advData.addServiceUUID(s_hid->getHidService()->getUUID());
-  NimBLEAdvertisementData scanResp; scanResp.setName("AITL Keyboard");
+  NimBLEAdvertisementData scanResp; scanResp.setName("Musecorder Keyboard");
   if (g_settings.bleLink) scanResp.addServiceUUID(NimBLEUUID(NUS_SVC));
   adv->setAdvertisementData(advData); adv->setScanResponseData(scanResp);
   bool ok = adv->start();
   s_started = true;
-  bridge::log("ble advertising 'AITL Keyboard'%s: %s", g_settings.bleLink ? " + uart link" : "", ok ? "ok" : "FAILED (payload?)");
+  bridge::log("ble advertising 'Musecorder Keyboard'%s: %s", g_settings.bleLink ? " + uart link" : "", ok ? "ok" : "FAILED (payload?)");
 }
 void end() {
   if (!s_started) return;

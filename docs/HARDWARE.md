@@ -1,4 +1,13 @@
-# Hardware notes — 2.8" capacitive CYD
+# Hardware notes
+
+## This unit — 2.4" capacitive CYD (`cyd24c`, ESP32-2432S024C) — probed 2026-10-26
+ESP32-D0WD-V3 rev 3.1, 4 MB flash (DIO), 40 MHz crystal, no PSRAM, MAC 00:70:07:27:e9:e8, CH340 on `/dev/cu.usbserial-110`.
+ILI9341 240×320 on HSPI, CST820 touch on I²C 33/32 (RST 25, INT 21), backlight 27, RGB LED 4/16/17 (active low),
+speaker/buzzer on IO26, microSD on VSPI (CS 5). Free for applets: IO22, IO21 (touch INT is polled, so it is free),
+IO26, IO35 (input only), IO34/36/39 (input only), BOOT (IO0, input). Heap after boot ≈ 127 KB; with an applet on screen ≈ 110 KB.
+The board's previous image (Marauder + TouchBoard dual boot) is backed up in `firmware-backup/` (checksum in git, binary not).
+
+## 2.8" capacitive CYD (the AITL original)
 
 Probe sketch: `tools/probe/` (`pio run -t upload`, then open the serial monitor). Output on this unit (2026-10-20):
 

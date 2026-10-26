@@ -422,7 +422,7 @@ void showHome() {
   load(s_home);
 }
 
-// ---------- inbox: recent cards from any Claude Code session ----------
+// ---------- inbox: recent cards from any Muse Code session ----------
 static void evInboxOpen(lv_event_t* e) {
   size_t i = (size_t)(uintptr_t)lv_event_get_user_data(e); if (i >= app::inbox.size()) return;
   String sid = app::inbox[i].session;
@@ -449,7 +449,7 @@ void showInbox() {
   load(scr);
 }
 
-// ---------- alerts (Claude Code permission / notices) ----------
+// ---------- alerts (Muse Code permission / notices) ----------
 static void alertBtn(lv_event_t* e) { app::replyAlert((const char*)lv_event_get_user_data(e)); }
 static void alertOpen(lv_event_t*) {
   String sid = app::alert.session; bool twoWay = app::alert.twoWay;

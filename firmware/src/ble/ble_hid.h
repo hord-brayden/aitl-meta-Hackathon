@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-// BLE HID keyboard + consumer control ("AITL Keyboard"). Pairs with macOS/iOS/Windows/Linux as a real keyboard.
+// BLE HID keyboard + consumer control ("Musecorder Keyboard"). Pairs with macOS/iOS/Windows/Linux as a real keyboard.
 namespace blehid {
   enum Mod : uint8_t { L_CTRL = 1, L_SHIFT = 2, L_ALT = 4, L_GUI = 8, R_CTRL = 16, R_SHIFT = 32, R_ALT = 64, R_GUI = 128 };
   void begin();

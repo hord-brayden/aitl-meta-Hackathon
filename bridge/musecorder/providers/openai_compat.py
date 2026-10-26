@@ -1,4 +1,4 @@
-"""Any OpenAI-compatible chat endpoint (OpenAI, OpenRouter, Meta Muse Spark when an endpoint is configured, LM Studio...)."""
+"""Any OpenAI-compatible chat endpoint (Meta Model API, OpenAI, OpenRouter, LM Studio...)."""
 from __future__ import annotations
 from typing import AsyncIterator
 
@@ -39,7 +39,7 @@ class OpenAICompatProvider(Provider):
         if not self.base_url:
             raise ProviderError(f"{self.label}: no base_url configured in config.toml")
         if not self.available():
-            raise ProviderError(f"{self.label}: key missing (musecorder keys set {self.name})")
+            raise ProviderError(f"{self.label}: key missing (musecorder keys set {self.name}, or export {self.key_env or 'the API key'})")
         model = model_id[len(self.prefix):]
         client = self._get_client()
         try:

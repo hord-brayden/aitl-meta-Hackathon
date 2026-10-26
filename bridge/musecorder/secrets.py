@@ -1,7 +1,7 @@
 """API keys: environment variables first, then the macOS Keychain (via /usr/bin/security).
 
-Nothing here is ever sent to the device. `musecorder keys set anthropic` stores a key in the login keychain
-under service "musecorder.anthropic". Rotate a key in the provider console if it was ever pasted anywhere else.
+Nothing here is ever sent to the device. `musecorder keys set muse` stores the Meta Model API key in the login
+keychain under service "musecorder.muse". Rotate a key in the provider console if it was ever pasted anywhere else.
 """
 from __future__ import annotations
 import os
@@ -9,13 +9,11 @@ import subprocess
 import sys
 
 ENV_NAMES = {
-    "anthropic": ["ANTHROPIC_API_KEY"],
-    "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    "muse": ["META_API_KEY", "MODEL_API_KEY"],      # Meta Model API (dev.meta.ai)
     "openai": ["OPENAI_API_KEY"],
     "openrouter": ["OPENROUTER_API_KEY"],
-    "muse": ["MUSE_API_KEY"],
 }
-ACCOUNT = "aitl"
+ACCOUNT = "musecorder"
 
 
 def _service(provider: str) -> str:
@@ -47,7 +45,7 @@ def set_key(provider: str, value: str) -> bool:
         raise RuntimeError("Keychain storage is macOS-only; export the environment variable instead.")
     out = subprocess.run(
         ["/usr/bin/security", "add-generic-password", "-a", ACCOUNT, "-s", _service(provider), "-w", value, "-U",
-         "-l", f"AITL bridge key: {provider}"],
+         "-l", f"Musecorder bridge key: {provider}"],
         capture_output=True, text=True, timeout=10,
     )
     return out.returncode == 0

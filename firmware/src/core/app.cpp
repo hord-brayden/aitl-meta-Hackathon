@@ -257,7 +257,7 @@ static void onMessage(JsonDocument& d, bridge::Transport from) {
     r["dictSource"] = g_settings.dictSource; r["dictTarget"] = g_settings.dictTarget; r["micGain"] = g_settings.micGain; r["model"] = currentModel; r["setupDone"] = g_settings.setupDone;
     r["wifiIp"] = bridge::ipAddress(); r["wifiStatus"] = bridge::wifiStatus(); r["bridgeStatus"] = bridge::bridgeStatus(); r["sd"] = sdInfo();
     bridge::sendVia(from, r);
-  } else if (!strcmp(t, "settings.set")) {               // bridge-side `aitl set key value` (USB/BLE/Wi-Fi, authenticated link)
+  } else if (!strcmp(t, "settings.set")) {               // bridge-side `musecorder set key value` (USB/BLE/Wi-Fi, authenticated link)
     const char* k = d["key"] | ""; JsonVariant v = d["value"]; bool ok = true;
     if (!strcmp(k, "bleEnabled")) { g_settings.bleEnabled = v.as<bool>(); if (g_settings.bleEnabled && !g_settings.wifiEnabled) blehid::begin(); else blehid::end(); }
     else if (!strcmp(k, "bleLink")) { g_settings.bleLink = v.as<bool>(); if (g_settings.bleEnabled) { blehid::end(); blehid::begin(); } }
