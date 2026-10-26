@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 ENV_NAMES = {
-    "muse": ["META_API_KEY", "MODEL_API_KEY"],      # Meta Model API (dev.meta.ai)
+    "muse": ["META_API_KEY", "META_CORE_API_KEY", "MODEL_API_KEY"],      # Meta Model API (dev.meta.ai)
     "openai": ["OPENAI_API_KEY"],
     "openrouter": ["OPENROUTER_API_KEY"],
 }

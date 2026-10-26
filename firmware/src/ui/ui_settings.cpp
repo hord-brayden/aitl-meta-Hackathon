@@ -8,6 +8,8 @@
 #include "../link/link.h"
 #include "../ble/ble_hid.h"
 #include "../hal/mic.h"
+#include "../applets/applet.h"
+#include <LittleFS.h>
 
 using namespace theme; using namespace ui_int;
 namespace ui {
@@ -31,6 +33,12 @@ static void cbDictTgt(lv_event_t* e) { g_settings.dictTarget = lv_dropdown_get_s
 static void cbMicGain(lv_event_t* e) { g_settings.micGain = lv_slider_get_value(lv_event_get_target(e)); settingsSave(); }
 static void cbBleLink(lv_event_t* e) { g_settings.bleLink = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED); settingsSave(); if (g_settings.bleEnabled) { blehid::end(); blehid::begin(); } toast(g_settings.bleLink ? "BLE link on: run musecorder serve --ble" : "BLE link off"); }
 static void cbMicTest(lv_event_t*);
+static void cbTouchTest(lv_event_t*);
+static void cbApps(lv_event_t*) { showApps(); }
+static void doRemoveApplets() { for (auto& a : applets::list()) applets::remove(a.id); toast("All applets removed"); showSettings(); }
+static void cbRemoveApplets(lv_event_t*) { confirm("Remove all applets?", "Every installed applet and its saved state is erased.", doRemoveApplets); }
+static void doClearAutostart() { for (auto& a : applets::list()) if (a.autostart) applets::setAutostart(a.id, false); toast("Boots to the home screen"); showSettings(); }
+static void cbClearAutostart(lv_event_t*) { doClearAutostart(); }
 static void cbDictSc(lv_event_t* e) { g_settings.dictShortcut = lv_dropdown_get_selected(lv_event_get_target(e)); settingsSave(); }
 static void ssidDone(const char* v) { strlcpy(g_settings.wifiSsid, v, sizeof(g_settings.wifiSsid)); settingsSave(); showTextEntry("WI-FI PASSWORD", g_settings.wifiPass, true, [](const char* p) { strlcpy(g_settings.wifiPass, p, sizeof(g_settings.wifiPass)); g_settings.wifiEnabled = true; settingsSave(); bridge::wifiApply(); showSettings(); }); }
 static void cbSsid(lv_event_t*) { showTextEntry("WI-FI NETWORK NAME", g_settings.wifiSsid, false, ssidDone); }
@@ -79,17 +87,28 @@ void showSettings() {
 
   sectionLabel(list, "TOUCH");
   addAction(list, "Calibrate touch", "", cbCal, nullptr);
+  addAction(list, "Touch test (draw)", "", cbTouchTest, nullptr);
   { static const uint16_t v[] = {250, 400, 600, 900}; uint16_t sel = 1; for (int i = 0; i < 4; i++) if (v[i] == g_settings.longPressMs) sel = i;
     addDropdown(list, "Long-press time", "250 ms\n400 ms\n600 ms\n900 ms", sel, cbLongPress, nullptr); }
   addDropdown(list, "Touch sensitivity", "Instant\nNormal\nFirm\nDeliberate", g_settings.touchDebounce - 1, cbDebounce, nullptr);
   addSwitch(list, "LED flash on tap", g_settings.hapticLed, cbTapLed, nullptr);
+
+  sectionLabel(list, "APPLETS");
+  { auto apps = applets::list(); String auto_; for (auto& a : apps) if (a.autostart) auto_ = a.name;
+    char n[40]; snprintf(n, sizeof(n), "%u installed", (unsigned)apps.size()); addAction(list, "Installed", n, cbApps, nullptr);
+    addAction(list, "Running", applets::running() ? applets::runningName().c_str() : "none", nullptr, nullptr);
+    addAction(list, "Autostart (kiosk)", auto_.length() ? auto_.c_str() : "off", auto_.length() ? cbClearAutostart : nullptr, nullptr);
+    { size_t tot = LittleFS.totalBytes(), used = LittleFS.usedBytes(); char f[40]; snprintf(f, sizeof(f), "%u KB free of %u", (unsigned)((tot - used) / 1024), (unsigned)(tot / 1024)); addAction(list, "Applet storage", f, nullptr, nullptr); }
+    if (!apps.empty()) addAction(list, "Remove all applets", "", cbRemoveApplets, nullptr); }
 
   sectionLabel(list, "STORAGE");
   addAction(list, "microSD", sdInfo().c_str(), nullptr, nullptr);
   addSwitch(list, "Log chats to microSD", g_settings.sdLog, cbSdLog, nullptr);
 
   sectionLabel(list, "ABOUT");
-  addAction(list, "Firmware", "AITL " AITL_FW_VERSION " / " TFT_PANEL_NAME, nullptr, nullptr);
+  addAction(list, "Firmware", "Musecorder " AITL_FW_VERSION " / " AITL_BOARD_NAME, nullptr, nullptr);
+  { uint32_t up = millis() / 1000; char u[32]; snprintf(u, sizeof(u), "%luh %02lum", (unsigned long)(up / 3600), (unsigned long)((up % 3600) / 60)); addAction(list, "Uptime", u, nullptr, nullptr); }
+  if (bridge::wifiUp()) { char w[48]; snprintf(w, sizeof(w), "%s  %d dBm", bridge::ipAddress().c_str(), bridge::rssi()); addAction(list, "Wi-Fi", w, nullptr, nullptr); }
   addAction(list, "Device ID", app::deviceId().c_str(), nullptr, nullptr);
   { String b = app::bridgeName.length() ? app::bridgeName + " " + app::bridgeVersion : String("none"); addAction(list, "Bridge", b.c_str(), nullptr, nullptr); }
   { String fp = bridge::bridgeCertFingerprint(); if (fp.length()) addAction(list, "Pinned cert", fp.substring(0, 23).c_str(), nullptr, nullptr); }
@@ -280,3 +299,42 @@ static void cbMicTest(lv_event_t*) {
   load(scr);
 }
 }
+
+// ---------- touch test: draw with your finger, see raw + mapped coordinates ----------
+namespace ui {
+static lv_obj_t* s_ttScr = nullptr; static lv_obj_t* s_ttLbl = nullptr; static lv_obj_t* s_ttCross = nullptr; static lv_timer_t* s_ttTimer = nullptr; static int s_ttDots = 0;
+static void ttTick(lv_timer_t*) {
+  lv_indev_t* in = lv_indev_get_act(); if (!in || !s_ttScr) return;
+  TouchRaw r = displayReadTouchRaw();
+  if (!r.touched) return;
+  lv_point_t p; lv_indev_get_point(in, &p);
+  lv_label_set_text_fmt(s_ttLbl, "mapped %3d,%3d   raw %3u,%3u   dots %d", (int)p.x, (int)p.y, (unsigned)r.x, (unsigned)r.y, s_ttDots);
+  lv_obj_clear_flag(s_ttCross, LV_OBJ_FLAG_HIDDEN); lv_obj_set_pos(s_ttCross, p.x - 10, p.y - 10);
+  if (s_ttDots < 400) {
+    lv_obj_t* d = lv_obj_create(s_ttScr); lv_obj_remove_style_all(d); lv_obj_set_size(d, 4, 4); lv_obj_set_style_radius(d, 2, 0);
+    lv_obj_set_style_bg_color(d, lv_color_hex(CO_PHOSPHOR), 0); lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0); lv_obj_add_flag(d, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_set_pos(d, p.x - 2, p.y - 2); lv_obj_move_background(d); s_ttDots++;
+  }
+}
+static void ttLeave(lv_event_t*) { if (s_ttTimer) { lv_timer_del(s_ttTimer); s_ttTimer = nullptr; } s_ttScr = nullptr; showSettings(); }
+static void ttClear(lv_event_t*) { cbTouchTest(nullptr); }
+static void cbTouchTest(lv_event_t*) {
+  if (s_ttTimer) { lv_timer_del(s_ttTimer); s_ttTimer = nullptr; }
+  s_ttDots = 0;
+  s_ttScr = lv_obj_create(nullptr); lv_obj_add_style(s_ttScr, &screen, 0); lv_obj_clear_flag(s_ttScr, LV_OBJ_FLAG_SCROLLABLE);
+  lv_coord_t W = displayW(), H = displayH();
+  for (int i = 1; i < 4; i++) {   // faint grid so you can judge straightness
+    lv_obj_t* v = lv_obj_create(s_ttScr); lv_obj_remove_style_all(v); lv_obj_set_size(v, 1, H); lv_obj_set_pos(v, W * i / 4, 0); lv_obj_set_style_bg_color(v, lv_color_hex(CO_MID), 0); lv_obj_set_style_bg_opa(v, LV_OPA_COVER, 0);
+    lv_obj_t* h = lv_obj_create(s_ttScr); lv_obj_remove_style_all(h); lv_obj_set_size(h, W, 1); lv_obj_set_pos(h, 0, H * i / 4); lv_obj_set_style_bg_color(h, lv_color_hex(CO_MID), 0); lv_obj_set_style_bg_opa(h, LV_OPA_COVER, 0);
+  }
+  s_ttLbl = makeLabel(s_ttScr, "Draw anywhere. The line should follow your finger exactly.", &mono); lv_obj_set_pos(s_ttLbl, 4, 4); lv_obj_set_width(s_ttLbl, W - 8); lv_label_set_long_mode(s_ttLbl, LV_LABEL_LONG_WRAP);
+  s_ttCross = lv_obj_create(s_ttScr); lv_obj_remove_style_all(s_ttCross); lv_obj_set_size(s_ttCross, 20, 20); lv_obj_set_style_radius(s_ttCross, 10, 0);
+  lv_obj_set_style_border_width(s_ttCross, 2, 0); lv_obj_set_style_border_color(s_ttCross, lv_color_hex(CO_AMBER), 0); lv_obj_add_flag(s_ttCross, LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_IGNORE_LAYOUT);
+  lv_obj_t* row = lv_obj_create(s_ttScr); lv_obj_remove_style_all(row); lv_obj_set_size(row, W - 8, btnH()); lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(row, 6, 0); lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, -4);
+  lv_obj_t* cal = makeButton(row, "Recalibrate"); lv_obj_set_flex_grow(cal, 1); lv_obj_add_event_cb(cal, [](lv_event_t*) { if (s_ttTimer) { lv_timer_del(s_ttTimer); s_ttTimer = nullptr; } s_ttScr = nullptr; showCalibrate(false); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* clr = makeButton(row, "Clear"); lv_obj_set_flex_grow(clr, 1); lv_obj_add_event_cb(clr, ttClear, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* back = makeButton(row, LV_SYMBOL_OK " Done", true); lv_obj_set_flex_grow(back, 1); lv_obj_add_event_cb(back, ttLeave, LV_EVENT_CLICKED, nullptr);
+  s_ttTimer = lv_timer_create(ttTick, 25, nullptr);
+  load(s_ttScr);
+}
+}  // namespace ui

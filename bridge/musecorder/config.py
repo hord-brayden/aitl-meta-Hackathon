@@ -35,7 +35,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "ble": False,               # link over Bluetooth (Nordic UART) too; needs `pip install bleak`
         "bind": "0.0.0.0",
         "discovery": True,          # advertise the bridge via mDNS when zeroconf is installed
-        "default_model": "muse/muse-spark-1.3",   # Meta Model API; needs META_API_KEY (musecorder keys set muse)
+        "default_model": "muse-code/default",     # Muse Code subscription (muse login): no per-token API spend. "muse/muse-spark-1.3" uses the Model API key instead
         "system_prompt": (
             "You are Musecorder, a hardware AI companion running on a small ESP32 touchscreen device. "
             "You are shown on a 2.8-inch screen, so answer tightly: lead with the answer, plain text, "
@@ -112,8 +112,33 @@ def ensure_dirs() -> None:
             pass
 
 
+def load_dotenv() -> list[str]:
+    """Load KEY=value lines from .env files into the environment (never overriding what is already set). Looked up in
+    the repo root (two levels above this package), the config dir and the current directory. Returns the names loaded."""
+    loaded: list[str] = []
+    candidates = [Path(__file__).resolve().parents[2] / ".env", CONFIG_DIR / ".env", Path.cwd() / ".env"]
+    for f in candidates:
+        try:
+            if not f.is_file():
+                continue
+            for line in f.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                if line.startswith("export "):
+                    line = line[7:].strip()
+                k, _, v = line.partition("=")
+                k = k.strip(); v = v.strip().strip('"').strip("'")
+                if k and v and k not in os.environ:
+                    os.environ[k] = v; loaded.append(k)
+        except OSError:
+            continue
+    return loaded
+
+
 def load() -> dict[str, Any]:
     ensure_dirs()
+    load_dotenv()
     if not CONFIG_FILE.exists():
         save(DEFAULT_CONFIG)
         return _deep_merge({}, DEFAULT_CONFIG)
