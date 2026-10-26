@@ -8,11 +8,13 @@ notifications) and the **applet relay** that lets Muse re-program the device wit
 
 ```sh
 cd bridge
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[discovery]" --config-settings editable_mode=compat   # add ,dev for pytest; ,ble for Bluetooth; ,stt for Whisper
-# (compat mode: the default editable hook fails to import outside the repo when the checkout path has spaces or "+")
+./install.sh                           # = python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev,discovery]"
+. .venv/bin/activate
 musecorder doctor                      # ports, keys, TLS, muse CLI, model catalog
 ```
+
+`install.sh` also works around iCloud Drive marking `.pth` files hidden (Python then skips them): it symlinks the
+package into site-packages so the console scripts import from any directory.
 
 Requires Python 3.10+, the `muse` CLI (`pip install muse-code` / see dev.meta.ai) on PATH or in `~/.local/bin`
 for Muse Code features, and `muse login` for a live model.

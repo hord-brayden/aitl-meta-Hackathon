@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <Wire.h>
 #include <map>
 #include <time.h>
 #include "../config.h"
@@ -211,6 +212,24 @@ static void runOne(JsonObject a) {
     else if (verb == "gpio.write") { int pin = (int)typed(v["pin"]).toNum(); if (!pinAllowed(pin, true)) { logLine("gpio: pin " + String(pin) + " not allowed"); continue; } pinMode(pin, OUTPUT); digitalWrite(pin, typed(v["value"]).truthy() ? HIGH : LOW); }
     else if (verb == "gpio.read") { int pin = (int)typed(v["pin"]).toNum(); if (!pinAllowed(pin, false)) continue; setState(rendered(v["into"]), expr::Value::num(digitalRead(pin))); }
     else if (verb == "adc.read") { int pin = (int)typed(v["pin"]).toNum(); if (!pinAllowed(pin, false)) continue; setState(rendered(v["into"]), expr::Value::num(analogRead(pin))); }
+    else if (verb == "i2c.scan" || verb == "i2c.read" || verb == "i2c.write") {   // user bus on the P3 header: SDA 21, SCL 22
+      static bool wireUp = false; if (!wireUp) { wireUp = Wire1.begin(21, 22, 100000); }
+      if (!wireUp) { logLine("i2c: bus init failed"); continue; }
+      if (verb == "i2c.scan") { String found; for (int a = 8; a < 120; a++) { Wire1.beginTransmission(a); if (Wire1.endTransmission() == 0) { if (found.length()) found += ","; found += "0x" + String(a, HEX); } } setState(rendered(v["into"]).length() ? rendered(v["into"]) : String("i2c"), expr::Value::str(found)); }
+      else {
+        int addr = (int)typed(v["addr"]).toNum(); int reg = v["reg"].isNull() ? -1 : (int)typed(v["reg"]).toNum();
+        if (verb == "i2c.write") { Wire1.beginTransmission(addr); if (reg >= 0) Wire1.write((uint8_t)reg); for (JsonVariant b : v["bytes"].as<JsonArray>()) Wire1.write((uint8_t)typed(b).toNum()); int rc = Wire1.endTransmission(); if (rc) logLine("i2c.write failed rc=" + String(rc)); }
+        else {
+          int len = (int)typed(v["len"]).toNum(); if (len < 1) len = 1; if (len > 32) len = 32;
+          if (reg >= 0) { Wire1.beginTransmission(addr); Wire1.write((uint8_t)reg); Wire1.endTransmission(false); }
+          int got = Wire1.requestFrom(addr, len); String hex; uint32_t val = 0;
+          for (int i = 0; i < got; i++) { int b = Wire1.read(); if (b < 0) break; char h[4]; snprintf(h, sizeof(h), "%02x", b); hex += h; if (i < 4) val = (val << 8) | (uint8_t)b; }
+          String into = rendered(v["into"]); if (!into.length()) into = "i2c";
+          setState(into, expr::Value::num(got ? (double)val : -1)); setState(into + "_hex", expr::Value::str(hex));
+          if (!got) logLine("i2c.read: no reply from 0x" + String(addr, HEX));
+        }
+      }
+    }
     else if (verb == "http") doHttp(v.as<JsonObject>());
     else if (verb == "ask") doAsk(v.as<JsonObject>());
     else if (verb == "hid.type") app::typeToMac(rendered(v));

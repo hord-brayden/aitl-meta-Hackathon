@@ -140,6 +140,16 @@ static void build(lv_obj_t* parent, JsonObject w, int depth) {
     lv_obj_t* l = lv_label_create(o); lv_obj_set_width(l, LV_PCT(100)); lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(l, big() ? &lv_font_unscii_16 : &lv_font_unscii_8, 0); lv_obj_set_style_text_color(l, lv_color_hex(colorFor(w, CO_PHOSPHOR)), 0);
     s_bind.push_back({l, 6, w});
+  } else if (type == "chart") {
+    o = lv_chart_create(parent); lv_obj_set_size(o, LV_PCT(100), (int)N(w["h"], big() ? 110 : 80));
+    lv_chart_set_type(o, R(w["kind"]) == "bar" ? LV_CHART_TYPE_BAR : LV_CHART_TYPE_LINE);
+    int pts = (int)N(w["points"], 30); if (pts < 2) pts = 2; if (pts > 120) pts = 120; lv_chart_set_point_count(o, pts);
+    lv_chart_set_range(o, LV_CHART_AXIS_PRIMARY_Y, (int)N(w["min"], 0), (int)N(w["max"], 100));
+    lv_chart_set_div_line_count(o, 3, 0); lv_chart_set_update_mode(o, LV_CHART_UPDATE_MODE_SHIFT);
+    lv_obj_set_style_bg_color(o, lv_color_hex(CO_ABYSS), 0); lv_obj_set_style_border_color(o, lv_color_hex(CO_MID), 0); lv_obj_set_style_line_color(o, lv_color_hex(CO_MID), 0); lv_obj_set_style_radius(o, 6, 0); lv_obj_set_style_pad_all(o, 4, 0);
+    lv_obj_set_style_size(o, 0, LV_PART_INDICATOR); lv_obj_set_style_line_width(o, 2, LV_PART_ITEMS);
+    lv_chart_add_series(o, lv_color_hex(colorFor(w, CO_CAERULEI)), LV_CHART_AXIS_PRIMARY_Y);
+    s_bind.push_back({o, 7, w});
   } else if (type == "spacer") {
     o = lv_obj_create(parent); lv_obj_remove_style_all(o); lv_obj_set_width(o, LV_PCT(100)); int h = (int)N(w["h"], 0); if (h > 0) lv_obj_set_height(o, h); else { lv_obj_set_height(o, 1); lv_obj_set_flex_grow(o, 1); }
   } else if (type == "divider") {
@@ -161,6 +171,12 @@ void refreshBindings() {
       case 4: { int v = (int)getState(R(b.w["bind"])).toNum(); if (v != lv_slider_get_value(b.obj)) lv_slider_set_value(b.obj, v, LV_ANIM_OFF); break; }
       case 5: { String v = getState(R(b.w["bind"])).toStr(); bool pw = b.w["password"] | false; String shown = v.length() ? (pw ? String("••••••") : v) : R(b.w["placeholder"]); lv_label_set_text(b.obj, shown.c_str()); lv_obj_set_style_text_color(b.obj, lv_color_hex(v.length() ? CO_BONE : CO_MUTE), 0); break; }
       case 6: { String v = getState(R(b.w["bind"])).toStr(); if (strcmp(lv_label_get_text(b.obj), v.c_str())) { lv_label_set_text(b.obj, v.c_str()); lv_obj_t* box = lv_obj_get_parent(b.obj); lv_obj_update_layout(box); lv_obj_scroll_to_y(box, LV_COORD_MAX, LV_ANIM_OFF); } break; }
+      case 7: {   // comma-separated numbers in a state string -> the last `points` values
+        String v = getState(R(b.w["bind"])).toStr(); lv_chart_series_t* ser = lv_chart_get_series_next(b.obj, nullptr); if (!ser) break;
+        uint16_t n = lv_chart_get_point_count(b.obj); lv_chart_set_all_value(b.obj, ser, LV_CHART_POINT_NONE);
+        std::vector<int> vals; int st = 0; while (st <= (int)v.length() && vals.size() < 240) { int c = v.indexOf(',', st); String tok = c < 0 ? v.substring(st) : v.substring(st, c); tok.trim(); if (tok.length()) vals.push_back((int)tok.toFloat()); if (c < 0) break; st = c + 1; }
+        size_t start = vals.size() > n ? vals.size() - n : 0; for (size_t i = start; i < vals.size(); i++) lv_chart_set_value_by_id(b.obj, ser, i - start, vals[i]);
+        lv_chart_refresh(b.obj); break; }
     }
   }
 }
@@ -200,6 +216,7 @@ static void dumpList(JsonArray items, String& out, int depth) {
     else if (type == "bar") out += String((int)N(w["value"], 0)) + "/" + String((int)N(w["max"], 100));
     else if (type == "input") { String v = getState(R(w["bind"])).toStr(); out += v.length() ? v : "(" + R(w["placeholder"]) + ")"; }
     else if (type == "log") { String v = getState(R(w["bind"])).toStr(); v.replace("\n", " / "); out += v; }
+    else if (type == "chart") { String v = getState(R(w["bind"])).toStr(); out += "series(" + String(v.length() ? v.substring(v.lastIndexOf(',', v.length() - 2) + 1) : "") + " latest)"; }
     out += "\n";
   }
 }

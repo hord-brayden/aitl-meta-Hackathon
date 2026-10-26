@@ -77,6 +77,7 @@ Every widget may carry `"hidden": "${expr}"` (hidden when truthy) and `"id": "w1
 | `bar` | `value` (template → number), `min`, `max`, `color` | progress / level bar |
 | `input` | `bind` (string key), `placeholder`, `password` (bool), `on_change` | tap opens the on-screen keyboard |
 | `log` | `bind` (string key), `lines` | monospace scrolling panel showing the last `lines` lines of the string |
+| `chart` | `bind` (string key holding comma-separated numbers), `points` (2–120), `min`, `max`, `h`, `kind` (`line` \| `bar`), `color` | plots the last `points` values; append readings with `set` (`"series": "${series + ',' + raw}"`) and trim with `substr` |
 | `spacer` | `h` | vertical gap, default: flex grow |
 | `divider` | | thin rule |
 
@@ -112,6 +113,9 @@ One verb per object. Any string value is a template.
 | `{"gpio.write": {"pin": 22, "value": "${armed ? 1 : 0}"}}` | drive a pin |
 | `{"gpio.read": {"pin": 22, "into": "btn"}}` | read a pin into state (0/1) |
 | `{"adc.read": {"pin": 34, "into": "raw"}}` | read an ADC pin (0–4095) into state |
+| `{"i2c.scan": {"into": "found"}}` | scan the user I²C bus on the P3 header (SDA 21, SCL 22, 100 kHz); `found` gets `"0x44,0x3c"` |
+| `{"i2c.read": {"addr": 68, "reg": 0, "len": 2, "into": "t"}}` | read `len` (≤ 32) bytes, optionally after writing a register byte; `t` gets the first ≤ 4 bytes as a big-endian number, `t_hex` the whole payload as hex |
+| `{"i2c.write": {"addr": 68, "reg": 36, "bytes": [1, 2]}}` | write a register byte (optional) followed by `bytes` |
 | `{"http": {"method": "GET\|POST\|PUT", "url": "...", "headers": {}, "json": {} \| "body": "...", "timeout": 10, "via": "auto\|bridge\|direct", "into": "resp", "then": [], "else": []}}` | HTTP request. `via: auto` (default) uses the bridge when it is linked, otherwise the device's own Wi-Fi. On completion `resp.status`, `resp.body` (≤ 2 KB, text) and, for a JSON body, `resp.json.<field>` are readable in templates; `err` holds the failure text in `else` |
 | `{"ask": {"prompt": "Summarize: ${log}", "into": "answer", "then": [], "else": []}}` | ask the current AI model through the bridge; the answer lands in state |
 | `{"hid.type": "text"}` / `{"hid.key": "cmd+tab"}` | type / press keys on the host (bridge or BLE keyboard, per device settings) |

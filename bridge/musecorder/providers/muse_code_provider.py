@@ -164,12 +164,13 @@ class MuseCodeProvider(Provider):
         log.info("approval %s (%s) -> %s", tool, decision or "timeout", choice.get("label"))
         return ApprovalDecisionInput(choice_id=str(choice["choiceId"]), feedback=feedback)
 
-    async def _stream_sdk(self, model: str, prompt: str, session_id: str | None) -> AsyncIterator[str]:
+    async def _stream_sdk(self, model: str, prompt: str, session_id: str | None, shown: str | None = None) -> AsyncIterator[str]:
         from muse_code import SendUserTurnOptions
         async with self._lock:
             session = await self._get_session(session_id, model)
         self.last_session_id = session.session_id
-        turn = await session.send_user_turn(SendUserTurnOptions(input=[{"type": "text", "text": prompt}], composer_input=prompt))
+        turn = await session.send_user_turn(SendUserTurnOptions(input=[{"type": "text", "text": prompt}], composer_input=shown or prompt,
+                                                                display_text=shown or prompt))   # transcript/title show the user's words
         final: list[str] = []
 
         async def collect_items():
@@ -195,7 +196,7 @@ class MuseCodeProvider(Provider):
                 collector.cancel()
 
     # ---------- exec fallback ----------
-    async def _stream_exec(self, model: str, prompt: str, session_id: str | None) -> AsyncIterator[str]:
+    async def _stream_exec(self, model: str, prompt: str, session_id: str | None, shown: str | None = None) -> AsyncIterator[str]:
         exe = self.muse_bin()
         sid = session_id or str(uuid.uuid4())
         self.last_session_id = sid
@@ -249,11 +250,12 @@ class MuseCodeProvider(Provider):
             # Imported or pre-existing history: fold earlier turns into the first prompt of the new session.
             hist = "\n\n".join(("User: " if m["role"] == "user" else "Assistant: ") + m["content"] for m in messages[:-1])
             prompt = f"Conversation so far (for context):\n\n{hist[-12000:]}\n\n---\nUser: {latest}"
-        if system and not session_id:
-            prompt = f"{system}\n\n{prompt}"            # the host owns its system prompt; ours rides along once per session
+        if system:
+            # The host owns its system prompt; a short trailing hint keeps answers screen-sized and the session title clean.
+            prompt = f"{prompt}\n\n(Musecorder: this is shown on a 2.8-inch device screen. Answer briefly, plain text, no markdown tables.)"
         gen = self._stream_sdk if sdk_available() else self._stream_exec
         try:
-            async for piece in gen(model, prompt, session_id):
+            async for piece in gen(model, prompt, session_id, latest[:200]):
                 yield piece
         except ProviderError:
             raise
