@@ -1,0 +1,11 @@
+firmware/.pio/
+firmware/build*/
+bridge/.venv/
+bridge/*.egg-info/
+__pycache__/
+.pytest_cache/
+.DS_Store
+firmware-backup/*.bin
+*.log
+node_modules/
+.muse/local/

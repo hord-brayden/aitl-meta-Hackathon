@@ -1,0 +1,117 @@
+"""Configuration: ~/.config/musecorder/config.toml (+ chats/, devices.json, tls/).
+
+Secrets (API keys, device tokens) never live in this file; see secrets.py / security.py.
+"""
+from __future__ import annotations
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover
+    import tomli as tomllib
+import tomli_w
+
+CONFIG_DIR = Path(os.environ.get("MUSECORDER_HOME", Path.home() / ".config" / "aitl"))
+CONFIG_FILE = CONFIG_DIR / "config.toml"
+CHATS_DIR = CONFIG_DIR / "chats"
+TLS_DIR = CONFIG_DIR / "tls"
+DEVICES_FILE = CONFIG_DIR / "devices.json"
+
+DEFAULT_CONFIG: dict[str, Any] = {
+    "bridge": {
+        "name": "",                 # defaults to the Mac's hostname
+        "serial_port": "auto",      # "auto" | "/dev/cu.usbserial-110" | "off"
+        "serial_baud": 460800,
+        "wifi": False,              # listen for Wi-Fi devices (TLS WebSocket)
+        "ws_port": 7777,
+        "wifi_mode": "signed",      # "signed" (HMAC frames; fits a classic ESP32) | "tls" (pinned cert; needs PSRAM)
+        "ble": False,               # link over Bluetooth (Nordic UART) too; needs `pip install bleak`
+        "bind": "0.0.0.0",
+        "discovery": True,          # advertise _aitl._tcp via mDNS when zeroconf is installed
+        "default_model": "claude-code/default",   # Claude via your Claude Code login; no API key
+        "system_prompt": (
+            "You are AITL, a hardware AI companion built by Caeruli Obscuri Laboratorium. "
+            "You are shown on a 2.8-inch screen, so answer tightly: lead with the answer, plain text, "
+            "no markdown tables or headers, short paragraphs. Expand only when asked."
+        ),
+        "max_output_tokens": 2048,
+        "title_model": "",          # model used to title chats; empty = same as the chat's model
+    },
+    "stt": {"engine": "auto", "whisper_model": "mlx-community/whisper-base-mlx", "gemini_model": "gemini-flash-latest", "language": "en"},
+    "hid": {
+        "typing_method": "paste",   # "paste" (clipboard + Cmd-V, Unicode-safe) | "keystroke"
+        "restore_clipboard": True,
+        "dictation": "menu",        # "menu" (Edit > Start Dictation) | "shortcut"
+        "dictation_shortcut": "ctrl ctrl",  # fallback when the app has no Edit > Start Dictation: "ctrl ctrl" | "rcmd rcmd" | "f5" (match System Settings > Keyboard > Dictation)
+        "notify": True,             # macOS notification on first HID action per session
+    },
+    "providers": {
+        "claude_code": {"enabled": True, "models": ["default", "opus", "sonnet", "haiku"], "effort": ""},
+        "anthropic": {"enabled": True, "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"], "live_list": False},
+        "gemini": {"enabled": True, "models": ["gemini-flash-latest", "gemini-pro-latest", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"], "live_list": True},
+        "ollama": {"enabled": True, "base_url": "http://127.0.0.1:11434", "models": [], "live_list": True},
+        "openai_compatible": [
+            {"name": "openai", "label": "OpenAI", "base_url": "https://api.openai.com/v1", "key_env": "OPENAI_API_KEY", "models": ["gpt-5", "gpt-5-mini"]},
+            {"name": "openrouter", "label": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY", "models": ["meta-llama/llama-4-maverick", "google/gemma-3-27b-it"]},
+            {"name": "muse", "label": "Meta Muse Spark", "base_url": "", "key_env": "MUSE_API_KEY", "models": ["muse-spark"]},
+        ],
+    },
+    "actions": [
+        {"id": "ask_voice", "label": "Ask by voice", "kind": "ask_voice"},
+        {"id": "summarize_clip", "label": "Summarize clipboard", "kind": "clipboard", "prompt": "Summarize this in 3 short bullet points:\n\n{clip}"},
+        {"id": "fix_clip", "label": "Fix grammar (clipboard -> type)", "kind": "clipboard_type", "prompt": "Fix spelling, grammar and punctuation. Keep meaning, tone and length. Return only the corrected text:\n\n{clip}"},
+        {"id": "explain_clip", "label": "Explain clipboard", "kind": "clipboard", "prompt": "Explain this clearly for a smart non-expert, in under 120 words:\n\n{clip}"},
+        {"id": "reply_clip", "label": "Draft a reply (-> type)", "kind": "clipboard_type", "prompt": "Draft a concise, friendly reply to this message. Return only the reply:\n\n{clip}"},
+        {"id": "translate_clip", "label": "Translate clipboard -> EN", "kind": "clipboard", "prompt": "Translate to English. Return only the translation:\n\n{clip}"},
+        {"id": "todo_clip", "label": "Extract action items", "kind": "clipboard", "prompt": "Extract the action items as a short checklist:\n\n{clip}"},
+    ],
+}
+
+
+def _deep_merge(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def ensure_dirs() -> None:
+    for d in (CONFIG_DIR, CHATS_DIR, TLS_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(d, 0o700)
+        except OSError:
+            pass
+
+
+def load() -> dict[str, Any]:
+    ensure_dirs()
+    if not CONFIG_FILE.exists():
+        save(DEFAULT_CONFIG)
+        return dict(DEFAULT_CONFIG)
+    with CONFIG_FILE.open("rb") as f:
+        user = tomllib.load(f)
+    cfg = _deep_merge(DEFAULT_CONFIG, user)
+    if user.get("actions"):
+        cfg["actions"] = user["actions"]  # lists replace, not merge
+    if user.get("providers", {}).get("openai_compatible"):
+        cfg["providers"]["openai_compatible"] = user["providers"]["openai_compatible"]
+    return cfg
+
+
+def save(cfg: dict[str, Any]) -> None:
+    ensure_dirs()
+    with CONFIG_FILE.open("wb") as f:
+        tomli_w.dump(cfg, f)
+    os.chmod(CONFIG_FILE, 0o600)
+
+
+def bridge_name(cfg: dict[str, Any]) -> str:
+    import socket
+    return cfg["bridge"].get("name") or socket.gethostname().split(".")[0]

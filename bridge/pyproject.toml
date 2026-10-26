@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aitl-bridge"
+version = "0.1.0"
+description = "AITL bridge: links the Caeruli Obscuri AITL hardware companion to AI providers and to your Mac"
+requires-python = ">=3.10"
+dependencies = [
+  "claude-agent-sdk>=0.2.100",
+  "anthropic>=0.60",
+  "google-genai>=1.0",
+  "openai>=1.50",
+  "httpx>=0.27",
+  "pyserial>=3.5",
+  "websockets>=12",
+  "cryptography>=42",
+  "tomli>=2.0; python_version < '3.11'",
+  "tomli-w>=1.0",
+]
+
+[project.optional-dependencies]
+discovery = ["zeroconf>=0.130"]
+ble = ["bleak>=0.22"]
+stt = ["mlx-whisper>=0.4"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+aitl = "aitl_bridge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["aitl_bridge*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

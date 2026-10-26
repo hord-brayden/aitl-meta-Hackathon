@@ -1,0 +1,248 @@
+// LVGL renderer for applets + the launcher screen.
+#include "applet.h"
+#include "../ui/ui.h"
+#include "../ui/theme.h"
+#include "../config.h"
+#include "../hal/display.h"
+#include "../hal/led.h"
+
+using namespace theme; using namespace ui_int;
+
+namespace applets {
+struct Binding { lv_obj_t* obj; uint8_t kind; JsonObject w; };   // kind: 0 text 1 bar 2 hidden 3 toggle 4 slider 5 input 6 log
+static std::vector<Binding> s_bind;
+static lv_obj_t* s_screen = nullptr;
+static JsonObject s_inputW;   // input widget awaiting the keyboard
+
+static bool resolverCb(const String& n, expr::Value& o, void*) { return resolve(n, o); }
+static String R(JsonVariant v) { if (v.is<const char*>()) return expr::render(v.as<const char*>(), resolverCb, nullptr); if (v.isNull()) return ""; return expr::Value::num(v.as<double>()).toStr(); }
+static double N(JsonVariant v, double def) { if (v.isNull()) return def; if (v.is<const char*>()) return expr::renderTyped(v.as<const char*>(), resolverCb, nullptr).toNum(); return v.as<double>(); }
+
+const char* symbolFor(const String& n) {
+  struct S { const char* k; const char* v; };
+  static const S tab[] = {{"plus", LV_SYMBOL_PLUS}, {"minus", LV_SYMBOL_MINUS}, {"ok", LV_SYMBOL_OK}, {"close", LV_SYMBOL_CLOSE}, {"wifi", LV_SYMBOL_WIFI}, {"bell", LV_SYMBOL_BELL}, {"power", LV_SYMBOL_POWER},
+    {"play", LV_SYMBOL_PLAY}, {"pause", LV_SYMBOL_PAUSE}, {"stop", LV_SYMBOL_STOP}, {"list", LV_SYMBOL_LIST}, {"edit", LV_SYMBOL_EDIT}, {"charge", LV_SYMBOL_CHARGE}, {"gps", LV_SYMBOL_GPS}, {"audio", LV_SYMBOL_AUDIO},
+    {"image", LV_SYMBOL_IMAGE}, {"eye_open", LV_SYMBOL_EYE_OPEN}, {"eye", LV_SYMBOL_EYE_OPEN}, {"warning", LV_SYMBOL_WARNING}, {"home", LV_SYMBOL_HOME}, {"refresh", LV_SYMBOL_REFRESH}, {"upload", LV_SYMBOL_UPLOAD}, {"download", LV_SYMBOL_DOWNLOAD},
+    {"settings", LV_SYMBOL_SETTINGS}, {"keyboard", LV_SYMBOL_KEYBOARD}, {"bluetooth", LV_SYMBOL_BLUETOOTH}, {"usb", LV_SYMBOL_USB}, {"sd_card", LV_SYMBOL_SD_CARD}, {"battery", LV_SYMBOL_BATTERY_FULL}, {"battery_full", LV_SYMBOL_BATTERY_FULL},
+    {"left", LV_SYMBOL_LEFT}, {"right", LV_SYMBOL_RIGHT}, {"up", LV_SYMBOL_UP}, {"down", LV_SYMBOL_DOWN}, {"trash", LV_SYMBOL_TRASH}, {"copy", LV_SYMBOL_COPY}, {"paste", LV_SYMBOL_PASTE}, {"save", LV_SYMBOL_SAVE}, {"file", LV_SYMBOL_FILE},
+    {"directory", LV_SYMBOL_DIRECTORY}, {"call", LV_SYMBOL_CALL}, {"envelope", LV_SYMBOL_ENVELOPE}, {"volume", LV_SYMBOL_VOLUME_MAX}, {"mute", LV_SYMBOL_MUTE}, {"shuffle", LV_SYMBOL_SHUFFLE}, {"loop", LV_SYMBOL_LOOP}, {"bars", LV_SYMBOL_BARS},
+    {"tint", LV_SYMBOL_TINT}, {"cut", LV_SYMBOL_CUT}, {"prev", LV_SYMBOL_PREV}, {"next", LV_SYMBOL_NEXT}, {"drive", LV_SYMBOL_DRIVE}, {"video", LV_SYMBOL_VIDEO}, {"backspace", LV_SYMBOL_BACKSPACE}, {"new_line", LV_SYMBOL_NEW_LINE}};
+  for (auto& s : tab) if (n == s.k) return s.v;
+  return nullptr;
+}
+
+static const lv_font_t* fontFor(const String& size) {
+  if (size == "s") return &lv_font_montserrat_12; if (size == "l") return &lv_font_montserrat_20;
+  if (size == "xl") return &lv_font_montserrat_28; if (size == "xxl") return &lv_font_montserrat_48;
+  return &lv_font_montserrat_14;
+}
+static uint32_t colorFor(JsonObject w, uint32_t def) {
+  String c = R(w["color"]); if (c.startsWith("#") && c.length() == 7) return strtoul(c.c_str() + 1, nullptr, 16);
+  String st = R(w["style"]);
+  if (st == "muted") return CO_MUTE; if (st == "accent" || st == "mono") return CO_CAERULEI; if (st == "warn") return CO_AMBER; if (st == "ok") return CO_PHOSPHOR; if (st == "error") return CO_RED;
+  return def;
+}
+static void applyHidden(lv_obj_t* o, JsonObject w) { if (!w["hidden"].isNull()) { bool h = expr::renderTyped(R(w["hidden"]).c_str(), resolverCb, nullptr).truthy(); if (w["hidden"].is<const char*>()) h = expr::renderTyped(w["hidden"].as<const char*>(), resolverCb, nullptr).truthy(); else h = w["hidden"].as<bool>(); if (h) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); else lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN); } }
+
+static void evBtn(lv_event_t* e) {
+  uintptr_t ud = (uintptr_t)lv_event_get_user_data(e); size_t doIdx = ud & 0xFFFF, holdIdx = (ud >> 16) & 0xFFFF;
+  lv_event_code_t c = lv_event_get_code(e);
+  if (c == LV_EVENT_LONG_PRESSED && holdIdx != 0xFFFF) { ledTapFlash(); runActionsAt(holdIdx); lv_obj_add_state(lv_event_get_target(e), LV_STATE_USER_1); }
+  else if (c == LV_EVENT_CLICKED) {
+    if (lv_obj_has_state(lv_event_get_target(e), LV_STATE_USER_1)) { lv_obj_clear_state(lv_event_get_target(e), LV_STATE_USER_1); return; }   // the release after a hold
+    if (doIdx != 0xFFFF) { ledTapFlash(); runActionsAt(doIdx); }
+  }
+}
+static void evToggle(lv_event_t* e) {
+  size_t i = (size_t)(uintptr_t)lv_event_get_user_data(e); if (i >= s_bind.size()) return;
+  JsonObject w = s_bind[i].w; setState(R(w["bind"]), expr::Value::boolean(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED)));
+  runActions(w["on_change"].as<JsonArray>());
+}
+static void evSlider(lv_event_t* e) {
+  size_t i = (size_t)(uintptr_t)lv_event_get_user_data(e); if (i >= s_bind.size()) return;
+  JsonObject w = s_bind[i].w; setState(R(w["bind"]), expr::Value::num(lv_slider_get_value(lv_event_get_target(e))));
+  runActions(w["on_change"].as<JsonArray>());
+}
+static void inputDone(const char* v) {
+  keepAlive(false);
+  if (!s_inputW.isNull()) { setState(R(s_inputW["bind"]), expr::Value::str(v)); runActions(s_inputW["on_change"].as<JsonArray>()); }
+  s_inputW = JsonObject();
+  if (running()) buildScreen(); else ui::showHome();
+}
+static void inputCancel() { keepAlive(false); s_inputW = JsonObject(); if (running()) buildScreen(); else ui::showHome(); }
+static void evInput(lv_event_t* e) {
+  size_t i = (size_t)(uintptr_t)lv_event_get_user_data(e); if (i >= s_bind.size()) return;
+  s_inputW = s_bind[i].w; keepAlive(true);
+  String ttl = R(s_inputW["placeholder"]); if (!ttl.length()) ttl = R(s_inputW["bind"]); ttl.toUpperCase();
+  ui::showTextEntryEx(ttl.c_str(), getState(R(s_inputW["bind"])).toStr().c_str(), s_inputW["password"] | false, inputDone, inputCancel);
+}
+
+static void build(lv_obj_t* parent, JsonObject w, int depth);
+static void buildList(lv_obj_t* parent, JsonArray items, int depth) { for (JsonObject w : items) build(parent, w, depth); }
+
+static void build(lv_obj_t* parent, JsonObject w, int depth) {
+  String type = (const char*)(w["type"] | "label");
+  lv_obj_t* o = nullptr;
+  if (type == "label" || type == "value") {
+    o = lv_label_create(parent); lv_obj_set_width(o, LV_PCT(100)); lv_label_set_long_mode(o, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(o, fontFor(R(w["size"])), 0); lv_obj_set_style_text_color(o, lv_color_hex(colorFor(w, CO_BONE)), 0);
+    String st = R(w["style"]); if (st == "mono") lv_obj_set_style_text_letter_space(o, 1, 0);
+    String al = R(w["align"]); lv_obj_set_style_text_align(o, al == "center" ? LV_TEXT_ALIGN_CENTER : al == "right" ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_text(o, R(w["text"]).c_str());
+    s_bind.push_back({o, 0, w});
+  } else if (type == "button") {
+    String st = R(w["style"]);
+    o = makeButton(parent, "", st == "primary");
+    if (st == "danger") { lv_obj_set_style_bg_color(o, lv_color_hex(0x3a0a12), 0); lv_obj_set_style_border_color(o, lv_color_hex(CO_RED), 0); }
+    if (st == "ghost") { lv_obj_set_style_bg_opa(o, LV_OPA_20, 0); }
+    int h = (int)N(w["h"], 0); lv_obj_set_height(o, h > 0 ? h : btnH() + 6);
+    int grow = (int)N(w["grow"], depth > 0 ? 1 : 0); if (grow > 0) lv_obj_set_flex_grow(o, grow); else lv_obj_set_width(o, LV_PCT(100));
+    lv_obj_t* l = lv_obj_get_child(o, 0); lv_label_set_text(l, R(w["text"]).c_str()); lv_obj_set_style_text_font(l, fontFor(R(w["size"]).length() ? R(w["size"]) : "m"), 0); lv_obj_center(l);
+    size_t doIdx = w["do"].isNull() ? 0xFFFF : registerActions(w["do"].as<JsonArray>()); size_t holdIdx = w["hold"].isNull() ? 0xFFFF : registerActions(w["hold"].as<JsonArray>());
+    void* ud = (void*)(uintptr_t)((doIdx & 0xFFFF) | ((holdIdx & 0xFFFF) << 16));
+    lv_obj_add_event_cb(o, evBtn, LV_EVENT_CLICKED, ud); if (holdIdx != 0xFFFF) lv_obj_add_event_cb(o, evBtn, LV_EVENT_LONG_PRESSED, ud);
+    s_bind.push_back({l, 0, w});
+  } else if (type == "row") {
+    o = lv_obj_create(parent); lv_obj_remove_style_all(o); lv_obj_set_width(o, LV_PCT(100)); lv_obj_set_height(o, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(o, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(o, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(o, (int)N(w["gap"], 4), 0); lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+    if (depth < 3) buildList(o, w["items"].as<JsonArray>(), depth + 1);
+  } else if (type == "toggle") {
+    o = row(parent, R(w["text"]).c_str());
+    lv_obj_t* sw = lv_switch_create(o); lv_obj_set_size(sw, big() ? 62 : 50, big() ? 32 : 26);
+    lv_obj_set_style_bg_color(sw, lv_color_hex(CO_DEEP), 0); lv_obj_set_style_bg_color(sw, lv_color_hex(CO_CAERULEI), LV_PART_INDICATOR | LV_STATE_CHECKED); lv_obj_set_style_bg_color(sw, lv_color_hex(CO_BONE), LV_PART_KNOB);
+    if (getState(R(w["bind"])).truthy()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    s_bind.push_back({sw, 3, w}); lv_obj_add_event_cb(sw, evToggle, LV_EVENT_VALUE_CHANGED, (void*)(uintptr_t)(s_bind.size() - 1));
+    s_bind.push_back({lv_obj_get_child(o, 0), 0, w});   // the label text is a template too
+  } else if (type == "slider") {
+    o = lv_obj_create(parent); lv_obj_remove_style_all(o); lv_obj_set_width(o, LV_PCT(100)); lv_obj_set_height(o, LV_SIZE_CONTENT); lv_obj_set_flex_flow(o, LV_FLEX_FLOW_COLUMN); lv_obj_set_style_pad_all(o, 6, 0); lv_obj_set_style_pad_row(o, 8, 0);
+    if (!w["text"].isNull()) { lv_obj_t* l = makeLabel(o, R(w["text"]).c_str(), &muted); s_bind.push_back({l, 0, w}); }
+    lv_obj_t* s = lv_slider_create(o); lv_slider_set_range(s, (int)N(w["min"], 0), (int)N(w["max"], 100)); lv_slider_set_value(s, (int)getState(R(w["bind"])).toNum(), LV_ANIM_OFF);
+    lv_obj_set_width(s, LV_PCT(96)); lv_obj_set_height(s, big() ? 14 : 10); lv_obj_set_style_bg_color(s, lv_color_hex(CO_DEEP), 0); lv_obj_set_style_bg_color(s, lv_color_hex(CO_CAERULEI), LV_PART_INDICATOR); lv_obj_set_style_bg_color(s, lv_color_hex(CO_BONE), LV_PART_KNOB); lv_obj_set_style_pad_all(s, big() ? 8 : 6, LV_PART_KNOB);
+    s_bind.push_back({s, 4, w}); lv_obj_add_event_cb(s, evSlider, LV_EVENT_RELEASED, (void*)(uintptr_t)(s_bind.size() - 1));
+  } else if (type == "bar") {
+    o = lv_bar_create(parent); lv_obj_set_size(o, LV_PCT(100), big() ? 18 : 12); lv_bar_set_range(o, (int)N(w["min"], 0), (int)N(w["max"], 100));
+    lv_obj_set_style_bg_color(o, lv_color_hex(CO_DEEP), 0); lv_obj_set_style_bg_color(o, lv_color_hex(colorFor(w, CO_CAERULEI)), LV_PART_INDICATOR); lv_obj_set_style_radius(o, 4, 0); lv_obj_set_style_radius(o, 4, LV_PART_INDICATOR);
+    lv_bar_set_value(o, (int)N(w["value"], 0), LV_ANIM_OFF);
+    s_bind.push_back({o, 1, w});
+  } else if (type == "input") {
+    o = lv_btn_create(parent); lv_obj_remove_style_all(o); lv_obj_add_style(o, &panel, 0); lv_obj_add_style(o, &btnPressed, LV_STATE_PRESSED);
+    lv_obj_set_size(o, LV_PCT(100), LV_SIZE_CONTENT); lv_obj_set_style_min_height(o, rowH(), 0); lv_obj_set_style_border_color(o, lv_color_hex(CO_CAERULEI_D), 0);
+    lv_obj_set_flex_flow(o, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(o, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t* l = makeLabel(o, "", &body); lv_label_set_long_mode(l, LV_LABEL_LONG_DOT); lv_obj_set_flex_grow(l, 1);
+    lv_obj_t* ic = makeLabel(o, LV_SYMBOL_EDIT, &muted); (void)ic;
+    s_bind.push_back({l, 5, w}); lv_obj_add_event_cb(o, evInput, LV_EVENT_CLICKED, (void*)(uintptr_t)(s_bind.size() - 1));
+  } else if (type == "log") {
+    o = lv_obj_create(parent); lv_obj_remove_style_all(o); lv_obj_add_style(o, &panel, 0); lv_obj_set_width(o, LV_PCT(100));
+    int lines = (int)N(w["lines"], 6); lv_obj_set_height(o, lines * (big() ? 18 : 11) + 14);
+    lv_obj_set_scroll_dir(o, LV_DIR_VER); lv_obj_set_scrollbar_mode(o, LV_SCROLLBAR_MODE_OFF); lv_obj_set_style_pad_all(o, 5, 0);
+    lv_obj_t* l = lv_label_create(o); lv_obj_set_width(l, LV_PCT(100)); lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(l, big() ? &lv_font_unscii_16 : &lv_font_unscii_8, 0); lv_obj_set_style_text_color(l, lv_color_hex(colorFor(w, CO_PHOSPHOR)), 0);
+    s_bind.push_back({l, 6, w});
+  } else if (type == "spacer") {
+    o = lv_obj_create(parent); lv_obj_remove_style_all(o); lv_obj_set_width(o, LV_PCT(100)); int h = (int)N(w["h"], 0); if (h > 0) lv_obj_set_height(o, h); else { lv_obj_set_height(o, 1); lv_obj_set_flex_grow(o, 1); }
+  } else if (type == "divider") {
+    o = lv_obj_create(parent); lv_obj_remove_style_all(o); lv_obj_set_size(o, LV_PCT(100), 1); lv_obj_set_style_bg_color(o, lv_color_hex(CO_MID), 0); lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+  } else {
+    o = makeLabel(parent, (String("? ") + type).c_str(), &muted);
+  }
+  if (o && !w["hidden"].isNull()) { s_bind.push_back({o, 2, w}); applyHidden(o, w); }
+}
+
+void refreshBindings() {
+  for (auto& b : s_bind) {
+    if (!b.obj) continue;
+    switch (b.kind) {
+      case 0: { String t = R(b.w["text"]); if (strcmp(lv_label_get_text(b.obj), t.c_str())) lv_label_set_text(b.obj, t.c_str()); break; }
+      case 1: lv_bar_set_value(b.obj, (int)N(b.w["value"], 0), LV_ANIM_OFF); break;
+      case 2: applyHidden(b.obj, b.w); break;
+      case 3: { bool on = getState(R(b.w["bind"])).truthy(); if (on != lv_obj_has_state(b.obj, LV_STATE_CHECKED)) { if (on) lv_obj_add_state(b.obj, LV_STATE_CHECKED); else lv_obj_clear_state(b.obj, LV_STATE_CHECKED); } break; }
+      case 4: { int v = (int)getState(R(b.w["bind"])).toNum(); if (v != lv_slider_get_value(b.obj)) lv_slider_set_value(b.obj, v, LV_ANIM_OFF); break; }
+      case 5: { String v = getState(R(b.w["bind"])).toStr(); bool pw = b.w["password"] | false; String shown = v.length() ? (pw ? String("••••••") : v) : R(b.w["placeholder"]); lv_label_set_text(b.obj, shown.c_str()); lv_obj_set_style_text_color(b.obj, lv_color_hex(v.length() ? CO_BONE : CO_MUTE), 0); break; }
+      case 6: { String v = getState(R(b.w["bind"])).toStr(); if (strcmp(lv_label_get_text(b.obj), v.c_str())) { lv_label_set_text(b.obj, v.c_str()); lv_obj_t* box = lv_obj_get_parent(b.obj); lv_obj_update_layout(box); lv_obj_scroll_to_y(box, LV_COORD_MAX, LV_ANIM_OFF); } break; }
+    }
+  }
+}
+
+static void evScrDeleted(lv_event_t*) { s_screen = nullptr; s_bind.clear(); onScreenGone(); }
+static void evMenu(lv_event_t*) { ui::showApps(); }
+void buildScreen() {
+  s_bind.clear();
+  lv_obj_t* scr = newScreen();
+  lv_obj_t* bar = statusBar(scr, "APP", runningName().c_str(), true);
+  lv_obj_t* menu = lv_btn_create(bar); lv_obj_remove_style_all(menu); lv_obj_add_style(menu, &btn, 0); lv_obj_add_style(menu, &btnPressed, LV_STATE_PRESSED);
+  lv_obj_set_size(menu, big() ? 50 : 34, chipH() + 6); lv_obj_set_style_pad_all(menu, 0, 0); lv_obj_set_style_radius(menu, LV_RADIUS_CIRCLE, 0);
+  lv_obj_t* ml = lv_label_create(menu); lv_label_set_text(ml, LV_SYMBOL_LIST); lv_obj_center(ml); lv_obj_add_event_cb(menu, evMenu, LV_EVENT_CLICKED, nullptr);
+  lv_obj_set_flex_grow(lv_obj_get_child(bar, -2), 1);   // push the menu button to the right of the title
+  lv_obj_t* body = lv_obj_create(scr); lv_obj_remove_style_all(body); lv_obj_set_width(body, LV_PCT(100)); lv_obj_set_flex_grow(body, 1);
+  lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN); lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(body, big() ? 6 : 4, 0); lv_obj_set_style_pad_hor(body, 2, 0);
+  lv_obj_set_scroll_dir(body, LV_DIR_VER); lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
+  buildList(body, uiArray(), 0);
+  lv_obj_add_event_cb(scr, evScrDeleted, LV_EVENT_DELETE, nullptr);
+  s_screen = scr; onScreenShown(scr);
+  load(scr);
+}
+
+static void dumpList(JsonArray items, String& out, int depth) {
+  for (JsonObject w : items) {
+    String type = (const char*)(w["type"] | "label");
+    if (!w["hidden"].isNull()) { bool h = w["hidden"].is<const char*>() ? expr::renderTyped(w["hidden"].as<const char*>(), resolverCb, nullptr).truthy() : w["hidden"].as<bool>(); if (h) continue; }
+    if (type == "row") { out += "[row] "; String inner; dumpList(w["items"].as<JsonArray>(), inner, depth + 1); inner.replace("\n", " | "); out += inner; out += "\n"; continue; }
+    out += "["; out += type; String st = R(w["style"]); String sz = R(w["size"]); if (st.length()) out += " " + st; if (sz.length()) out += " " + sz; out += "] ";
+    if (type == "label" || type == "value" || type == "button") out += R(w["text"]);
+    else if (type == "toggle") out += R(w["text"]) + " = " + (getState(R(w["bind"])).truthy() ? "on" : "off");
+    else if (type == "slider") out += R(w["text"]) + " = " + getState(R(w["bind"])).toStr();
+    else if (type == "bar") out += String((int)N(w["value"], 0)) + "/" + String((int)N(w["max"], 100));
+    else if (type == "input") { String v = getState(R(w["bind"])).toStr(); out += v.length() ? v : "(" + R(w["placeholder"]) + ")"; }
+    else if (type == "log") { String v = getState(R(w["bind"])).toStr(); v.replace("\n", " / "); out += v; }
+    out += "\n";
+  }
+}
+String uiText() {
+  String out = "APPLET " + runningId() + " \"" + runningName() + "\"" + (onScreen() ? "" : " (running in background, home screen shown)") + "\n";
+  dumpList(uiArray(), out, 0);
+  return out.substring(0, 3000);
+}
+}  // namespace applets
+
+// ---------------- launcher ----------------
+namespace ui {
+static std::vector<applets::Info> s_apps; static String s_rmId;
+static void doRemove() { applets::remove(s_rmId); toast("Applet removed"); showApps(); }
+static void evOpenApp(lv_event_t* e) {
+  size_t i = (size_t)(uintptr_t)lv_event_get_user_data(e); if (i >= s_apps.size()) return;
+  if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) { s_rmId = s_apps[i].id; confirm("Remove applet?", (s_apps[i].name + " is deleted from flash.").c_str(), doRemove); return; }
+  String err; if (!applets::open(s_apps[i].id, err)) toast(err.c_str(), true);
+}
+static void evMacActions(lv_event_t*) { showActions(); }
+static void evResume(lv_event_t*) { applets::buildScreen(); }
+void showApps() {
+  s_apps = applets::list();
+  lv_obj_t* scr = newScreen(); statusBar(scr, "07", "APPS", true);
+  lv_obj_t* grid = lv_obj_create(scr); lv_obj_remove_style_all(grid); lv_obj_set_width(grid, LV_PCT(100)); lv_obj_set_flex_grow(grid, 1);
+  lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP); lv_obj_set_style_pad_gap(grid, 4, 0); lv_obj_set_scroll_dir(grid, LV_DIR_VER); lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_AUTO);
+  if (applets::running() && !applets::onScreen()) {
+    lv_obj_t* b = makeButton(grid, (String(LV_SYMBOL_PLAY "  Back to ") + applets::runningName()).c_str(), true); lv_obj_set_size(b, LV_PCT(100), btnH() + 4); lv_obj_add_event_cb(b, evResume, LV_EVENT_CLICKED, nullptr);
+  }
+  if (s_apps.empty()) {
+    lv_obj_t* l = makeLabel(grid, "No applets yet.\n\nAsk Muse on your Mac:\n\"make the device a people counter\"\n\nIt writes a small JSON applet and installs it here in seconds.", &muted);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP); lv_obj_set_width(l, LV_PCT(100)); lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0); lv_obj_set_style_pad_ver(l, 12, 0);
+  }
+  for (size_t i = 0; i < s_apps.size(); i++) {
+    auto& a = s_apps[i];
+    lv_obj_t* b = lv_btn_create(grid); lv_obj_remove_style_all(b); lv_obj_add_style(b, &btn, 0); lv_obj_add_style(b, &btnPressed, LV_STATE_PRESSED);
+    if (a.id == applets::runningId()) lv_obj_set_style_border_color(b, lv_color_hex(CO_PHOSPHOR), 0);
+    lv_obj_set_size(b, LV_PCT(49), btnH() + (big() ? 30 : 22)); lv_obj_set_style_pad_all(b, 4, 0);
+    lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN); lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_row(b, 2, 0);
+    const char* sym = applets::symbolFor(a.icon);
+    lv_obj_t* ic = lv_label_create(b); lv_label_set_text(ic, sym ? sym : (a.icon.length() ? a.icon.substring(0, 2).c_str() : LV_SYMBOL_FILE)); lv_obj_set_style_text_font(ic, fontIcon(), 0); lv_obj_set_style_text_color(ic, lv_color_hex(CO_CAERULEI), 0);
+    lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, a.name.c_str()); lv_obj_set_style_text_font(l, fontSmall(), 0); lv_label_set_long_mode(l, LV_LABEL_LONG_DOT); lv_obj_set_width(l, LV_PCT(100)); lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_add_event_cb(b, evOpenApp, LV_EVENT_CLICKED, (void*)(uintptr_t)i); lv_obj_add_event_cb(b, evOpenApp, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)i);
+  }
+  lv_obj_t* hint = makeLabel(scr, "hold a tile to remove", &mono); lv_obj_set_style_text_color(hint, lv_color_hex(CO_MUTE), 0);
+  lv_obj_t* mb = makeButton(scr, "Mac actions  " LV_SYMBOL_RIGHT); lv_obj_set_size(mb, LV_PCT(100), btnH()); lv_obj_add_event_cb(mb, evMacActions, LV_EVENT_CLICKED, nullptr);
+  load(scr);
+}
+void showApplet() { if (applets::running()) applets::buildScreen(); else showApps(); }
+}  // namespace ui
