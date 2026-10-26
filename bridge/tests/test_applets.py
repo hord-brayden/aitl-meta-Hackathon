@@ -61,8 +61,8 @@ def test_widgets_and_actions():
     errs = applets.validate(minimal(on={"start": [{"led": "purple"}, {"http": {"url": "x", "method": "TRACE", "timeout": 99, "via": "cloud"}}]}))
     assert any("led must be" in e for e in errs) and any("GET/POST/PUT" in e for e in errs)
     assert any("timeout" in e for e in errs) and any("via" in e for e in errs)
-    errs = applets.validate(minimal(on={"start": [{"gpio.mode": {"pin": 99, "mode": "out"}}, {"sleep": 5000}, {"if": "${count}", "then": [{"nope": 1}]}, {"if": 3, "then": [], "bogus": 1}]}))
-    assert any("pin must be" in e for e in errs) and any("sleep" in e for e in errs) and any("on.start[2].then[0]" in e for e in errs)
+    errs = applets.validate(minimal(on={"start": [{"gpio.mode": {"pin": 99, "mode": "out"}}, {"i2c.read": {"len": 2}}, {"if": "${count}", "then": [{"nope": 1}]}, {"if": 3, "then": [], "bogus": 1}]}))
+    assert any("pin must be" in e for e in errs) and any("needs addr" in e for e in errs) and any("on.start[2].then[0]" in e for e in errs)
     assert any("on.start[3]: if takes only" in e for e in errs) and any("if condition must be" in e for e in errs)
 
 

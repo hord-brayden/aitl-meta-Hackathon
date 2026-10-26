@@ -36,6 +36,7 @@ ROUTES: dict[tuple[str, str], str] = {
     ("POST", "/admin/applet/event"): "applet_event",
     ("GET", "/admin/applet/ui"): "applet_ui",
     ("GET", "/admin/applet/log"): "applet_log",
+    ("GET", "/admin/screenshot"): "screenshot",
 }
 
 

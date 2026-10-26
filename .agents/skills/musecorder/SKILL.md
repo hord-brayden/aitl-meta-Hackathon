@@ -20,7 +20,8 @@ Examples: [examples/applets/](examples/applets/) - `door-tally`, `pomodoro`, `di
 3. **Validate + install**: `applet_install(json, open=true)`. It runs the schema validator first and returns
    errors without sending; fix them and retry. The device answers `applet.ack {ok, err, size, heap}`.
 4. **Read the screen back**: `applet_screen` returns a plain-text rendering of what the user sees. Compare it
-   with what you intended (labels, numbers, button texts).
+   with what you intended (labels, numbers, button texts). `device_screenshot(scale=2)` returns a real PNG of the
+   panel when layout, overflow or colors matter (takes ~2 s; scale=1 is full 320x240, ~5 s).
 5. **Test**: `applet_event(id, name)` runs a handler as if tapped; `applet_state_set(id, '{"k": v}')` changes a
    value; `applet_state_get(id)` reads it back; `applet_log(id)` shows `{"log": ...}` lines and errors
    (templates that failed render as `?` and log the reason).
@@ -60,6 +61,7 @@ Limits: document <= 12 KB, <= 48 widgets, <= 32 state keys, <= 16 handlers, <= 8
 | `bar` | `value` (template -> number), `min`, `max`, `color` |
 | `input` | `bind` (string key), `placeholder`, `password`, `on_change` (opens the on-screen keyboard) |
 | `log` | `bind` (string key), `lines` - monospace scrolling panel; feed it with `append` |
+| `chart` | `bind` (string key of comma-separated numbers), `points` 2-120, `min`, `max`, `h`, `kind` line/bar, `color` - plots the last `points` values; append readings with `set` (`"series": "${series + ',' + raw}"`) and trim with `substr` |
 | `spacer` (`h`) / `divider` | layout |
 
 Any widget may carry `"hidden": "${expr}"`. Every `text` is a template: `${expr}` re-renders on state change.
@@ -74,10 +76,11 @@ Any widget may carry `"hidden": "${expr}"`. Every `text` is a template: `${expr}
 `set {k: v}` · `inc`/`dec "k"` or `{"k": 5}` · `toggle "k"` · `append {"k": "line ${x}", "max": 20}` ·
 `toast "text"` · `led idle|green|red|amber|blue|thinking|off` · `beep {freq, ms}` ·
 `gpio.mode {pin, mode: in|in_pullup|out}` · `gpio.write {pin, value}` · `gpio.read {pin, into}` · `adc.read {pin, into}` ·
+`i2c.scan {into}` · `i2c.read {addr, reg, len<=32, into}` (first <=4 bytes as a number in `into`, hex in `into_hex`) · `i2c.write {addr, reg, bytes[]}` (user bus on the P3 header: SDA 21, SCL 22) ·
 `http {method GET|POST|PUT, url, headers, json|body, timeout<=15, via auto|bridge|direct, into, then[], else[]}` ·
 `ask {prompt, into, then[], else[]}` (asks the bridge's current AI model) · `hid.type "text"` · `hid.key "cmd+tab"` ·
 `notify {title, text}` (macOS) · `log "text"` · `event "name"` · `emit "name"` (to host scripts) ·
-`{"if": "${expr}", "then": [...], "else": [...]}` (flat, not nested) · `save true` · `exit true` · `sleep ms` (<= 2000).
+`{"if": "${expr}", "then": [...], "else": [...]}` (flat, not nested) · `save true` · `exit true`.
 
 After `http`: `resp.status`, `resp.body` (<= 2 KB) and `resp.json.<field>` are readable; `err` in `else`.
 A `set` value that is exactly one `${expr}` keeps the expression's type (number/bool); anything else is a string.

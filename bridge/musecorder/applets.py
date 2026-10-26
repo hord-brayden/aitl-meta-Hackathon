@@ -23,7 +23,10 @@ CHUNK_CHARS = 4000            # applet.put `d` size
 INLINE_LIMIT = 5000           # documents above this many bytes are chunked with applet.put
 
 ICONS = {"plus", "ok", "wifi", "bell", "power", "play", "list", "edit", "charge", "gps", "audio", "image", "eye_open",
-         "warning", "home", "refresh", "upload", "download", "settings", "keyboard", "bluetooth", "usb", "sd_card", "battery_full"}
+         "warning", "home", "refresh", "upload", "download", "settings", "keyboard", "bluetooth", "usb", "sd_card", "battery_full",
+         "battery", "minus", "close", "pause", "stop", "eye", "left", "right", "up", "down", "trash", "copy", "paste", "save", "file",
+         "directory", "call", "envelope", "volume", "mute", "shuffle", "loop", "bars", "tint", "cut", "prev", "next", "drive", "video",
+         "backspace", "new_line"}
 
 COMMON_WIDGET_KEYS = {"type", "id", "hidden"}
 WIDGETS: dict[str, set[str]] = {
@@ -35,6 +38,7 @@ WIDGETS: dict[str, set[str]] = {
     "bar":     {"value", "min", "max", "color"},
     "input":   {"bind", "placeholder", "password", "on_change"},
     "log":     {"bind", "lines"},
+    "chart":   {"bind", "points", "min", "max", "h", "kind", "color"},
     "spacer":  {"h"},
     "divider": set(),
 }
@@ -45,7 +49,7 @@ BUTTON_STYLES = {"default", "primary", "danger", "ghost"}
 COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 ACTIONS = {"set", "inc", "dec", "toggle", "append", "toast", "led", "beep", "gpio.mode", "gpio.write", "gpio.read",
-           "adc.read", "http", "ask", "hid.type", "hid.key", "notify", "log", "event", "emit", "if", "save", "exit", "sleep"}
+           "adc.read", "i2c.scan", "i2c.read", "i2c.write", "http", "ask", "hid.type", "hid.key", "notify", "log", "event", "emit", "if", "save", "exit"}
 LEDS = {"idle", "green", "red", "amber", "blue", "thinking", "off"}
 GPIO_MODES = {"in", "in_pullup", "out"}
 HTTP_METHODS = {"GET", "POST", "PUT"}
@@ -160,11 +164,17 @@ def _check_actions(actions: Any, where: str, errors: list[str], state_keys: set[
         elif verb in ("hid.type", "hid.key", "log", "event", "emit"):
             if not isinstance(arg, str) or not arg: errors.append(f"{w}: {verb} takes a string")
         elif verb == "notify":
-            if not isinstance(arg, dict) or not (arg.get("title") or arg.get("text")): errors.append(f"{w}: notify takes {{title, text}}")
+            if isinstance(arg, str):
+                if not arg: errors.append(f"{w}: notify text is empty")
+            elif not isinstance(arg, dict) or not (arg.get("title") or arg.get("text")): errors.append(f"{w}: notify takes {{title, text}} or a string")
         elif verb in ("save", "exit"):
             if arg is not True: errors.append(f"{w}: {verb} takes true")
-        elif verb == "sleep":
-            if not (isinstance(arg, int) and 0 <= arg <= 2000): errors.append(f"{w}: sleep takes 0-2000 ms")
+        elif verb == "i2c.scan":
+            if not isinstance(arg, dict): errors.append(f"{w}: i2c.scan takes {{into}}")
+        elif verb in ("i2c.read", "i2c.write"):
+            if not isinstance(arg, dict) or "addr" not in arg: errors.append(f"{w}: {verb} needs addr (7-bit)")
+            elif verb == "i2c.read" and "len" in arg and not (isinstance(arg["len"], int) and 1 <= arg["len"] <= 32): errors.append(f"{w}: len must be 1-32")
+            elif verb == "i2c.write" and not isinstance(arg.get("bytes", []), list): errors.append(f"{w}: bytes must be a list")
 
 
 def _check_widget(wd: Any, where: str, errors: list[str], state_keys: set[str], count: list[int]) -> None:

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlsplit
 
-from . import __version__, config, mac, protocol, audio, stt, applets
+from . import __version__, config, mac, protocol, audio, stt, applets, screenshot
 from .chat_store import ChatStore, Chat
 from .providers import ProviderError
 from .router import Router
@@ -78,6 +78,8 @@ class Shared:
         self.pending_settings: dict[str, asyncio.Future] = {}
         self.applet_waiters: dict[str, list[asyncio.Future]] = {}
         self.applet_logs: dict[str, deque] = {}
+        self.screen_rows: dict[int, bytes] = {}
+        self.screen_waiter: asyncio.Future | None = None
         mc = self.router.muse_code
         if mc is not None:
             mc.approval_cb = self.ask_permission
@@ -205,7 +207,39 @@ class Shared:
             return {"ok": ok, "error": None if ok else mac.accessibility_hint()}
         if op.startswith("applet_"):
             return await self.admin_applet(op[len("applet_"):], data)
+        if op == "screenshot":
+            return await self.admin_screenshot(data)
         return {"ok": False, "error": "unknown op"}
+
+    async def admin_screenshot(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Ask the device for its framebuffer (`screen.get`), assemble the rows into a PNG (base64 in the reply)."""
+        if self.screen_waiter and not self.screen_waiter.done():
+            return {"ok": False, "error": "a screenshot is already in progress"}
+        try:
+            scale = max(1, min(4, int(data.get("scale", 2))))
+        except (TypeError, ValueError):
+            scale = 2
+        self.screen_rows = {}
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self.screen_waiter = fut
+        try:
+            if await self.broadcast({"t": "screen.get", "scale": scale}) == 0:
+                return {"ok": False, "error": "no device linked"}
+            try:
+                done = await asyncio.wait_for(fut, 40)
+            except asyncio.TimeoutError:
+                return {"ok": False, "error": "device did not finish the capture within 40s", "rows": len(self.screen_rows)}
+        finally:
+            self.screen_waiter = None
+        if done.get("err"):
+            return {"ok": False, "error": str(done["err"])}
+        w, h = int(done.get("w", 0)), int(done.get("h", 0))
+        if w <= 0 or h <= 0:
+            return {"ok": False, "error": "bad size from device"}
+        png = screenshot.rows_to_png(self.screen_rows, w, h)
+        self.screen_rows = {}
+        import base64 as _b64
+        return {"ok": True, "w": w, "h": h, "scale": scale, "png_base64": _b64.b64encode(png).decode("ascii")}
 
     async def admin_applet(self, op: str, data: dict[str, Any]) -> dict[str, Any]:
         aid = str(data.get("id", ""))[:24]
@@ -341,6 +375,7 @@ class DeviceSession:
             "audio.cancel": self.on_audio_cancel, "settings.ack": self.on_settings_ack, "settings.dump": self.on_settings_dump,
             "applet.log": self.on_applet_log, "applet.event.out": self.on_applet_event_out,
             "net.http": self.on_net_http, "ai.ask": self.on_ai_ask, "notify": self.on_notify,
+            "screen.row": self.on_screen_row, "screen.done": self.on_screen_done,
         }.get(t)
         if handler:
             await handler(m)
@@ -615,6 +650,17 @@ class DeviceSession:
         if self.s.hooks and self.s.hooks.reply(aid, action):
             await self.s.broadcast({"t": "alert.clear", "id": aid})
             log.info("permission %s -> %s (device %s)", aid, action, self.device_id)
+
+    # ---------- screen capture ----------
+    async def on_screen_row(self, m: dict[str, Any]) -> None:
+        if self.s.screen_waiter is not None:
+            y, data = screenshot.decode_row(m)
+            self.s.screen_rows[y] = data
+
+    async def on_screen_done(self, m: dict[str, Any]) -> None:
+        fut = self.s.screen_waiter
+        if fut and not fut.done():
+            fut.set_result(m)
 
     # ---------- applets (docs/APPLETS.md section 6, device -> bridge) ----------
     async def on_applet_reply(self, m: dict[str, Any]) -> None:

@@ -9,7 +9,7 @@ import json as _json
 import os
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 
 from . import applets
 from .hooks import admin_request
@@ -117,6 +117,17 @@ def applet_event(id: str, name: str) -> str:
 def applet_screen() -> str:
     """A plain-text rendering of what is on the device screen right now (applet.ui.get). Use it to check your work."""
     return _dump(admin_request("/admin/applet/ui"))
+
+
+@mcp.tool()
+def device_screenshot(scale: int = 2):
+    """Capture what the device's screen shows right now as a PNG image (scale 1 = 320x240, ~5 s; 2 = 160x120, ~1.5 s).
+    Use after applet_install to check layout, colors and overflow; applet_screen is the faster text-only check."""
+    import base64
+    res = admin_request(f"/admin/screenshot?scale={scale}", timeout=50)
+    if not res.get("ok"):
+        return _dump(res)
+    return Image(data=base64.b64decode(res["png_base64"]), format="png")
 
 
 @mcp.tool()

@@ -44,7 +44,7 @@ extended (`firmware/src/applets/`).
 | Launcher (APPS) with one tile per applet, hold to remove, escape hatch (hold BOOT 3 s) | `firmware/src/applets/applet_ui.cpp` |
 | Chat with Muse Spark from the device, streamed token by token; model picker; multiple chats | bridge `providers/muse_provider.py` |
 | Muse Code sessions listed and resumed from the device; tool approvals pop up on the touchscreen with Allow / Deny | bridge `providers/muse_code_provider.py` |
-| Muse Code drives the device: MCP server (`applet_install`, `applet_screen`, `applet_state_get`, …) + a project skill that teaches the applet format | `bridge/musecorder/mcp_server.py`, `.agents/skills/musecorder/` |
+| Muse Code drives the device: MCP server (`applet_install`, `applet_screen`, `device_screenshot` (a real PNG of the panel), `applet_state_get`, …) + a project skill that teaches the applet format | `bridge/musecorder/mcp_server.py`, `.agents/skills/musecorder/` |
 | Everything AITL already did: BLE HID keyboard, dictation into the Mac, clipboard actions, device mic, Wi-Fi link with signed frames, first-boot wizard, settings | `docs/` |
 
 ## Quick start

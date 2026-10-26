@@ -3,31 +3,146 @@
   "name": "Pomodoro",
   "icon": "play",
   "version": 1,
-  "state": { "minutes": 25, "left": 1500, "running": false, "status": "ready", "done": 0 },
-  "persist": [ "minutes", "done" ],
+  "state": {
+    "minutes": 25,
+    "left": 1500,
+    "running": false,
+    "status": "ready",
+    "done": 0
+  },
+  "persist": [
+    "minutes",
+    "done"
+  ],
   "ui": [
-    { "type": "label", "text": "${hhmmss(left)}", "size": "xxl", "align": "center" },
-    { "type": "bar", "value": "${left}", "min": 0, "max": 3600, "color": "#3b82f6" },
-    { "type": "row", "items": [
-      { "type": "button", "text": "${running ? 'Pause' : 'Start'}", "style": "primary", "grow": 2, "do": [ { "toggle": "running" }, { "set": { "status": "${running ? 'focus' : 'paused'}" } } ] },
-      { "type": "button", "text": "Reset", "do": [ { "event": "reset" } ] }
-    ]},
-    { "type": "slider", "bind": "minutes", "min": 5, "max": 60, "on_change": [ { "event": "reset" } ] },
-    { "type": "label", "text": "${status} · ${done} done", "style": "muted", "align": "center" }
+    {
+      "type": "label",
+      "text": "${hhmmss(left)}",
+      "size": "xxl",
+      "align": "center"
+    },
+    {
+      "type": "bar",
+      "value": "${left}",
+      "min": 0,
+      "max": 3600,
+      "color": "#3b82f6"
+    },
+    {
+      "type": "row",
+      "items": [
+        {
+          "type": "button",
+          "text": "${running ? 'Pause' : 'Start'}",
+          "style": "primary",
+          "grow": 2,
+          "do": [
+            {
+              "toggle": "running"
+            },
+            {
+              "set": {
+                "status": "${running ? 'focus' : 'paused'}"
+              }
+            }
+          ]
+        },
+        {
+          "type": "button",
+          "text": "Reset",
+          "do": [
+            {
+              "event": "reset"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "slider",
+      "bind": "minutes",
+      "min": 5,
+      "max": 60,
+      "on_change": [
+        {
+          "event": "reset"
+        }
+      ]
+    },
+    {
+      "type": "label",
+      "text": "${status} \u00b7 ${done} done",
+      "style": "muted",
+      "align": "center"
+    }
   ],
   "on": {
-    "start": [ { "event": "reset" } ],
-    "reset": [ { "set": { "running": false, "left": "${minutes * 60}", "status": "ready" } }, { "led": "idle" } ],
+    "start": [
+      {
+        "event": "reset"
+      }
+    ],
+    "reset": [
+      {
+        "set": {
+          "running": false,
+          "left": "${minutes * 60}",
+          "status": "ready"
+        }
+      },
+      {
+        "led": "idle"
+      }
+    ],
     "every:1": [
-      { "if": "${running && left > 0}", "then": [ { "dec": "left" } ] },
-      { "if": "${running && left == 0}", "then": [ { "event": "finished" } ] }
+      {
+        "if": "${running && left > 0}",
+        "then": [
+          {
+            "dec": "left"
+          }
+        ]
+      },
+      {
+        "if": "${running && left == 0}",
+        "then": [
+          {
+            "event": "finished"
+          }
+        ]
+      }
     ],
     "finished": [
-      { "set": { "running": false, "status": "time is up" } },
-      { "inc": "done" },
-      { "beep": { "freq": 880, "ms": 200 } }, { "sleep": 250 }, { "beep": { "freq": 1320, "ms": 300 } },
-      { "led": "green" },
-      { "notify": { "title": "Pomodoro", "text": "Time is up: take a break" } }
+      {
+        "set": {
+          "running": false,
+          "status": "time is up"
+        }
+      },
+      {
+        "inc": "done"
+      },
+      {
+        "beep": {
+          "freq": 880,
+          "ms": 200
+        }
+      },
+      {
+        "beep": {
+          "freq": 1320,
+          "ms": 300
+        }
+      },
+      {
+        "led": "green"
+      },
+      {
+        "notify": {
+          "title": "Pomodoro",
+          "text": "Time is up: take a break"
+        }
+      }
     ]
   }
 }

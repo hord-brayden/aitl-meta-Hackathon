@@ -363,6 +363,17 @@ def cmd_applet(args) -> None:
     sys.exit(f"unknown applet action {a}")
 
 
+def cmd_screenshot(args) -> None:
+    import base64
+    from .hooks import admin_request
+    res = admin_request(f"/admin/screenshot?scale={args.scale}", timeout=50)
+    if not res.get("ok"):
+        sys.exit(res.get("error") or "screenshot failed")
+    out = args.out or f"musecorder-{int(__import__('time').time())}.png"
+    pathlib.Path(out).write_bytes(base64.b64decode(res["png_base64"]))
+    print(f"  {res['w']}x{res['h']} -> {out}")
+
+
 def cmd_muse_setup(args) -> None:
     from . import muse_setup
     for line in muse_setup.setup(mcp_command=args.mcp_command, skip_skill=args.no_skill, skip_mcp=args.no_mcp):
@@ -488,6 +499,10 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--force", action="store_true", help="install: send even when validation fails")
     ap.set_defaults(fn=cmd_applet)
 
+    sc = sub.add_parser("screenshot", help="capture the device screen to a PNG (through the running bridge)")
+    sc.add_argument("--scale", type=int, default=1, help="1 = full 320x240 (~5 s), 2 = half size (~1.5 s)")
+    sc.add_argument("-o", "--out", help="output file (default musecorder-<time>.png)")
+    sc.set_defaults(fn=cmd_screenshot)
     ms = sub.add_parser("muse-setup", help="register the MCP server in ~/.config/muse/settings.json and install the Muse Code skill")
     ms.add_argument("--mcp-command", help="path to musecorder-mcp (default: the one next to this interpreter)")
     ms.add_argument("--no-skill", action="store_true"); ms.add_argument("--no-mcp", action="store_true")

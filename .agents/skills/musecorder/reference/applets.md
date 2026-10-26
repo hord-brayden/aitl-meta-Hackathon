@@ -125,7 +125,6 @@ One verb per object. Any string value is a template.
 | `{"if": "${expr}", "then": [], "else": []}` | branch |
 | `{"save": true}` | persist now (otherwise debounced) |
 | `{"exit": true}` | leave the applet |
-| `{"sleep": 200}` | pause this action list (max 2000 ms; the UI keeps running) |
 
 ## 5. Expressions
 
