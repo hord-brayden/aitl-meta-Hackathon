@@ -1,0 +1,6 @@
+# Musecorder CYD 2.4" (4 MB flash) layout for the Muse gadget firmware. The partition table sits at
+# CONFIG_PARTITION_TABLE_OFFSET=0x10000 (sdkconfig.defaults). One factory app, no OTA slots.
+# Name,     Type, SubType, Offset,  Size
+nvs,        data, nvs,     0x11000, 0x5000
+phy_init,   data, phy,     0x16000, 0x1000
+app,        app,  factory, 0x20000, 0x3E0000

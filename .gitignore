@@ -13,3 +13,4 @@ firmware-backup/*.bin
 firmware/.pio/
 firmware/build*/
 node_modules/
+gadget/sdk/

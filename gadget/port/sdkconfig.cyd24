@@ -1,0 +1,47 @@
+# Sunton ESP32-2432S024C "Cheap Yellow Display" 2.4": classic ESP32-D0WD-V3 (no PSRAM), 4 MB flash, ILI9341 240x320
+# on HSPI, CST820 touch (unused here), BOOT button on GPIO0, CH340 USB-UART. Status shows as colour bars on the LCD.
+# Load last, after sdkconfig.defaults. Derived from devices/sdkconfig.ideaspark (classic ESP32, no PSRAM).
+CONFIG_IDF_TARGET="esp32"
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341=y
+CONFIG_HOMEHUB_BLE_NAME_SUFFIX="-CYD"
+CONFIG_HOMEHUB_BUTTON_GPIO=0
+
+# Signed apps without Secure Boot need chip revision 3.0+ (this unit is a D0WD-V3 rev 3.1).
+CONFIG_ESP32_REV_MIN_3=y
+
+# 4 MB flash, DIO: one factory app slot, no OTA (see partitions_cyd24_4mb.csv).
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_40M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_cyd24_4mb.csv"
+CONFIG_HOMEHUB_OTA_ENABLED=n
+
+# No PSRAM: everything in internal RAM; shrink TLS output records.
+CONFIG_SPIRAM=n
+CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC=y
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=n
+CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
+
+# BLE only (pairing); release the classic BT controller memory.
+CONFIG_BTDM_CTRL_MODE_BLE_ONLY=y
+CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=n
+CONFIG_BTDM_CTRL_MODE_BTDM=n
+
+# Fewer Wi-Fi buffers.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_RX_BA_WIN=16
+CONFIG_ESP_WIFI_TX_BA_WIN=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+
+# Classic ESP32 IRAM is small: keep lwIP/Wi-Fi hot paths in flash.
+CONFIG_LWIP_IRAM_OPTIMIZATION=n
+CONFIG_LWIP_EXTRA_IRAM_OPTIMIZATION=n
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+
+# No PSRAM: the home-network tunnel does not fit next to the control session.
+CONFIG_HOMEHUB_TUNNEL=n
