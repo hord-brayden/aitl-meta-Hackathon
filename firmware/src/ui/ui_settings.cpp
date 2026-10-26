@@ -60,7 +60,7 @@ static String sectionSummary(int i) {
   switch (i) {
     case 0: return app::bridgeLinked() ? "Linked over " + app::linkSummary() : (g_settings.wifiEnabled ? bridge::wifiStatus() : String("USB, Wi-Fi off"));
     case 1: return g_settings.bleEnabled ? blehid::status() : String("off");
-    case 2: return g_settings.dictSource == 1 ? "Device mic" : "Host Mac dictation";
+    case 2: return g_settings.dictSource == 1 ? "Device mic" : "Mac dictation";
     case 3: { char b[24]; snprintf(b, sizeof(b), "Brightness %u%%", (unsigned)(g_settings.brightness * 100 / 255)); return b; }
     case 4: return "Calibrate, test";
     case 5: { char b[24]; snprintf(b, sizeof(b), "%u installed", (unsigned)applets::list().size()); return b; }
@@ -144,16 +144,26 @@ void showSettings() {
   if (s_section < 0) {
     statusBar(scr, "", "Settings", true);
     lv_obj_t* list = scrollList(scr);
+    // Menu: a fixed-height grid (2 columns on the 4", 1 column on the 2.4") so rows line up and nothing wraps.
+    const int cardH = big() ? 58 : 50;
     lv_obj_t* grid = lv_obj_create(list); lv_obj_remove_style_all(grid); lv_obj_set_size(grid, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP); lv_obj_set_style_pad_gap(grid, big() ? 10 : 6, 0);
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP); lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(grid, big() ? 8 : 6, 0); lv_obj_set_style_pad_column(grid, 0, 0);
+    const lv_font_t* nameFont = big() ? &lv_font_montserrat_18 : &lv_font_montserrat_16;
+    const lv_font_t* sumFont = big() ? &lv_font_montserrat_14 : &lv_font_montserrat_12;
     for (int i = 0; i < 8; i++) {
       lv_obj_t* b = lv_btn_create(grid); lv_obj_remove_style_all(b); lv_obj_add_style(b, &card, 0); lv_obj_add_style(b, &pressed, LV_STATE_PRESSED);
-      lv_obj_set_width(b, big() ? LV_PCT(49) : LV_PCT(100)); lv_obj_set_height(b, LV_SIZE_CONTENT); lv_obj_set_style_pad_all(b, big() ? 12 : 10, 0);
+      lv_obj_set_size(b, big() ? LV_PCT(49) : LV_PCT(100), cardH); lv_obj_set_style_pad_ver(b, 0, 0); lv_obj_set_style_pad_hor(b, big() ? 12 : 10, 0);
+      lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
       lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(b, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_column(b, big() ? 12 : 10, 0);
       lv_obj_t* ic = makeLabel(b, kSectionIcons[i], &body); lv_obj_set_style_text_color(ic, lv_color_hex(MU_TEAL), 0); lv_obj_set_style_text_font(ic, big() ? &lv_font_montserrat_20 : &lv_font_montserrat_16, 0);
-      lv_obj_t* col = lv_obj_create(b); lv_obj_remove_style_all(col); lv_obj_set_flex_grow(col, 1); lv_obj_set_height(col, LV_SIZE_CONTENT); lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN); lv_obj_set_style_pad_row(col, 1, 0);
-      lv_obj_t* t = makeLabel(col, kSectionNames[i], &body); lv_obj_set_width(t, LV_PCT(100)); lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
-      lv_obj_t* sm = makeLabel(col, sectionSummary(i).c_str(), &caption); lv_obj_set_width(sm, LV_PCT(100)); lv_label_set_long_mode(sm, LV_LABEL_LONG_DOT);
+      lv_obj_set_width(ic, big() ? 26 : 22); lv_obj_set_style_text_align(ic, LV_TEXT_ALIGN_CENTER, 0);
+      lv_obj_t* col = lv_obj_create(b); lv_obj_remove_style_all(col); lv_obj_set_flex_grow(col, 1); lv_obj_set_height(col, LV_SIZE_CONTENT); lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN); lv_obj_set_style_pad_row(col, 0, 0);
+      lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_t* t = makeLabel(col, kSectionNames[i], &body); lv_obj_set_style_text_font(t, nameFont, 0);
+      lv_obj_set_size(t, LV_PCT(100), lv_font_get_line_height(nameFont)); lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
+      lv_obj_t* sm = makeLabel(col, sectionSummary(i).c_str(), &caption); lv_obj_set_style_text_font(sm, sumFont, 0);
+      lv_obj_set_size(sm, LV_PCT(100), lv_font_get_line_height(sumFont)); lv_label_set_long_mode(sm, LV_LABEL_LONG_DOT);
       lv_obj_t* ch = makeLabel(b, LV_SYMBOL_RIGHT, &caption); lv_obj_set_style_text_color(ch, lv_color_hex(MU_DIM), 0);
       lv_obj_add_event_cb(b, evSection, LV_EVENT_CLICKED, (void*)(uintptr_t)i);
     }
