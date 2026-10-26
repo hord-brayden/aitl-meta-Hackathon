@@ -22,6 +22,9 @@
 
 <p align="center"><img src="docs/img/home.png" width="320" alt="Home: a conversation with Muse"> <img src="docs/img/applet-door-tally.png" width="320" alt="Door Tally applet running on the device"></p>
 <p align="center"><img src="docs/img/apps.png" width="320" alt="Apps launcher"> <img src="docs/img/settings.png" width="320" alt="Settings"></p>
+<p align="center"><img src="docs/img/4in-home.png" width="320" alt="4-inch: home, two panes"> <img src="docs/img/4in-applet.png" width="320" alt="4-inch: Door Tally applet"></p>
+<p align="center"><img src="docs/img/4in-apps.png" width="320" alt="4-inch: Apps launcher"> <img src="docs/img/4in-settings.png" width="320" alt="4-inch: settings in two columns"></p>
+<p align="center"><i>The same firmware on the 4-inch Hosyond board (480×320, profile <code>hosyond40r</code>): a two-pane home, three-column launcher and two-column settings. Captures from that panel read dark tones a little lighter than the glass shows.</i></p>
 <p align="center"><i>Captured from the panel itself over the link (<code>musecorder screenshot</code>). Left to right: home with a Muse conversation, the door-tally applet, the launcher, settings.</i></p>
 
 ## The idea

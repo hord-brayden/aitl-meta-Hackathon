@@ -113,7 +113,7 @@ class LGFX : public lgfx::LGFX_Device {
 };
 
 static LGFX tft;
-static constexpr uint16_t kBufLinesMax = (TFT_NATIVE_H > 320) ? 24 : 32;   // 2 x 480x24 RGB565 = 46 KB; DMA overlaps render with transfer
+static constexpr uint16_t kBufLinesMax = (TFT_NATIVE_H > 320) ? 12 : 32;   // 480-wide boards: 2 x 480x12 RGB565 = 23 KB (keeps ~80 KB free with an applet up); 320-wide: 2 x 320x32 = 41 KB. DMA overlaps render with transfer
 static uint16_t kBufLines = kBufLinesMax;
 static lv_disp_draw_buf_t s_drawBuf;
 static lv_disp_drv_t s_dispDrv;

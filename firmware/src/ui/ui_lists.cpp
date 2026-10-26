@@ -134,7 +134,7 @@ void showCompose(int target) {
   lv_obj_t* ai = makeButton(top, "Ask " LV_SYMBOL_RIGHT, target == 0); lv_obj_set_size(ai, big() ? 84 : 58, chipH() + 6); lv_obj_set_style_pad_all(ai, 0, 0); lv_obj_add_event_cb(ai, evSendAI, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* mac = makeButton(top, "Mac " LV_SYMBOL_RIGHT, target == 1); lv_obj_set_size(mac, big() ? 84 : 58, chipH() + 6); lv_obj_set_style_pad_all(mac, 0, 0); lv_obj_add_event_cb(mac, evSendMac, LV_EVENT_CLICKED, nullptr);
   s_ta = lv_textarea_create(scr); lv_obj_set_width(s_ta, LV_PCT(100)); lv_obj_set_flex_grow(s_ta, 1); styleTextarea(s_ta, target == 0 ? "Ask anything" : "Text to type into the Mac");
-  s_kb = lv_keyboard_create(scr); lv_obj_set_size(s_kb, LV_PCT(100), (lv_coord_t)(displayH() * 0.52f)); lv_keyboard_set_textarea(s_kb, s_ta); lv_keyboard_set_mode(s_kb, LV_KEYBOARD_MODE_TEXT_LOWER); styleKeyboard(s_kb);
+  s_kb = lv_keyboard_create(scr); lv_obj_set_size(s_kb, LV_PCT(100), (lv_coord_t)(displayH() * (big() ? 0.50f : 0.52f))); lv_keyboard_set_textarea(s_kb, s_ta); lv_keyboard_set_mode(s_kb, LV_KEYBOARD_MODE_TEXT_LOWER); styleKeyboard(s_kb);
   lv_obj_remove_event_cb(s_kb, lv_keyboard_def_event_cb); lv_obj_add_event_cb(s_kb, lv_keyboard_def_event_cb, LV_EVENT_VALUE_CHANGED, nullptr); lv_obj_add_event_cb(s_kb, evKb, LV_EVENT_ALL, nullptr);
   load(scr);
 }
@@ -158,7 +158,7 @@ void showTextEntryEx(const char* ttl, const char* initial, bool password, void (
   if (password) makeIconButton(top, LV_SYMBOL_EYE_OPEN, chipH() + 6, evEntryEye);
   s_entryTa = lv_textarea_create(scr); lv_obj_set_width(s_entryTa, LV_PCT(100)); lv_obj_set_flex_grow(s_entryTa, 1); styleTextarea(s_entryTa, "");
   lv_textarea_set_one_line(s_entryTa, true); lv_textarea_set_text(s_entryTa, initial ? initial : ""); lv_textarea_set_password_mode(s_entryTa, password);
-  lv_obj_t* kb = lv_keyboard_create(scr); lv_obj_set_size(kb, LV_PCT(100), (lv_coord_t)(displayH() * 0.55f)); lv_keyboard_set_textarea(kb, s_entryTa); styleKeyboard(kb);
+  lv_obj_t* kb = lv_keyboard_create(scr); lv_obj_set_size(kb, LV_PCT(100), (lv_coord_t)(displayH() * (big() ? 0.50f : 0.55f))); lv_keyboard_set_textarea(kb, s_entryTa); styleKeyboard(kb);
   lv_obj_add_event_cb(kb, evEntryKb, LV_EVENT_ALL, nullptr);
   load(scr);
 }

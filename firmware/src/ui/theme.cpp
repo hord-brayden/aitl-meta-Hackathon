@@ -7,16 +7,17 @@
 
 namespace theme {
 #if defined(AITL_UI_BIG)
+// 480x320: 12/16/24 px rhythm, 52 px rows, 56 px buttons, 18 px body.
 bool big() { return true; }
-lv_coord_t dockH() { return 74; }
-lv_coord_t btnH() { return 50; }
-lv_coord_t rowH() { return 48; }
-lv_coord_t chipH() { return 32; }
-const lv_font_t* fontTitle() { return &lv_font_montserrat_28; }
+lv_coord_t dockH() { return 60; }
+lv_coord_t btnH() { return 56; }
+lv_coord_t rowH() { return 52; }
+lv_coord_t chipH() { return 34; }
+const lv_font_t* fontTitle() { return &lv_font_montserrat_24; }
 const lv_font_t* fontBody() { return &lv_font_montserrat_18; }
 const lv_font_t* fontSmall() { return &lv_font_montserrat_16; }
 const lv_font_t* fontLabel() { return &lv_font_montserrat_14; }
-const lv_font_t* fontIcon() { return &lv_font_montserrat_28; }
+const lv_font_t* fontIcon() { return &lv_font_montserrat_24; }
 #else
 bool big() { return false; }
 lv_coord_t dockH() { return 50; }
@@ -47,14 +48,14 @@ void init() {
   lv_style_init(&card);
   lv_style_set_bg_color(&card, lv_color_hex(MU_SURFACE)); lv_style_set_bg_opa(&card, LV_OPA_COVER);
   lv_style_set_border_width(&card, 0); lv_style_set_radius(&card, big() ? 20 : 16);
-  lv_style_set_pad_all(&card, big() ? 14 : 10); lv_style_set_text_color(&card, lv_color_hex(MU_TEXT));
+  lv_style_set_pad_all(&card, big() ? 16 : 10); lv_style_set_text_color(&card, lv_color_hex(MU_TEXT));
   lv_style_set_shadow_width(&card, 0);
 
   lv_style_init(&pill);
   lv_style_set_bg_color(&pill, lv_color_hex(MU_SURFACE2)); lv_style_set_bg_opa(&pill, LV_OPA_COVER);
   lv_style_set_border_width(&pill, 0); lv_style_set_radius(&pill, LV_RADIUS_CIRCLE);
   lv_style_set_text_color(&pill, lv_color_hex(MU_TEXT)); lv_style_set_text_font(&pill, fontBody());
-  lv_style_set_pad_ver(&pill, big() ? 12 : 8); lv_style_set_pad_hor(&pill, big() ? 18 : 14); lv_style_set_shadow_width(&pill, 0);
+  lv_style_set_pad_ver(&pill, big() ? 12 : 8); lv_style_set_pad_hor(&pill, big() ? 20 : 14); lv_style_set_shadow_width(&pill, 0);
 
   lv_style_init(&pillPrimary);
   lv_style_set_bg_color(&pillPrimary, lv_color_hex(MU_TEAL)); lv_style_set_bg_grad_color(&pillPrimary, lv_color_hex(MU_MAGENTA));

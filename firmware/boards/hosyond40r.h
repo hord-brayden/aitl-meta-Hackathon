@@ -6,7 +6,7 @@
 #define TFT_NATIVE_W 320
 #define TFT_NATIVE_H 480
 #define AITL_PANEL_ST7796 1
-#define AITL_PANEL_READABLE 0
+#define AITL_PANEL_READABLE 1       // GRAM read-back for screenshots (6 MHz read clock); set 0 if captures are garbage
 #define AITL_DEFAULT_INVERT 1          // these ST7796 panels show a negative image without inversion
 #define AITL_TOUCH_XPT2046_SHARED 1    // LovyanGFX Touch_XPT2046 on the LCD bus
 #define AITL_UI_BIG 1                  // 480-wide layout: larger fonts, taller buttons

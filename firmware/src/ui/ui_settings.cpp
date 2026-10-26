@@ -54,8 +54,14 @@ static void cbClearAutostart(lv_event_t*) { for (auto& a : applets::list()) if (
 void showSettings() {
   lv_obj_t* scr = newScreen(); statusBar(scr, "", "Settings", true);
   lv_obj_t* list = scrollList(scr);
+  lv_obj_t* L = list, *R = list;
+  if (big()) {   // two columns of cards inside the scrolling list
+    lv_obj_t* row2 = lv_obj_create(list); lv_obj_remove_style_all(row2); lv_obj_set_size(row2, LV_PCT(100), LV_SIZE_CONTENT); lv_obj_set_flex_flow(row2, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(row2, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START); lv_obj_set_style_pad_column(row2, 12, 0);
+    auto col = [&]() { lv_obj_t* c = lv_obj_create(row2); lv_obj_remove_style_all(c); lv_obj_set_flex_grow(c, 1); lv_obj_set_height(c, LV_SIZE_CONTENT); lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN); lv_obj_set_style_pad_row(c, 12, 0); lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE); return c; };
+    L = col(); R = col();
+  }
 
-  lv_obj_t* c = sectionCard(list, "Connection");
+  lv_obj_t* c = sectionCard(L, "Connection");
   addAction(c, "USB link", app::bridgeLinked() && app::linkSummary() == "USB" ? app::bridgeName.c_str() : "plug in, run musecorder serve", nullptr, nullptr);
   addSwitch(c, "Wi-Fi", g_settings.wifiEnabled, cbWifi, nullptr);
   addAction(c, "Network", bridge::wifiStatus().c_str(), cbSsid, nullptr);
@@ -64,20 +70,20 @@ void showSettings() {
   addAction(c, "Pair over network", bridge::hasBridgeCert() ? "paired (re-pair)" : "start", cbPair, nullptr);
   if (bridge::hasBridgeCert()) addAction(c, "Forget bridge", "", cbForget, nullptr);
 
-  c = sectionCard(list, "Bluetooth");
-  addSwitch(c, "Bluetooth keyboard", g_settings.bleEnabled, cbBle, nullptr);
+  c = sectionCard(R, "Bluetooth");
+  addSwitch(c, big() ? "Keyboard" : "Bluetooth keyboard", g_settings.bleEnabled, cbBle, nullptr);
   addAction(c, "Status", blehid::status().c_str(), nullptr, nullptr);
   addDropdown(c, "Keystrokes via", "Bridge (USB/Wi-Fi)\nBluetooth HID", g_settings.hidTarget, cbHidTarget, nullptr);
   addDropdown(c, "BLE dictation key", "Right Cmd x2\nCtrl x2\nF5\nCmd+Opt+D", g_settings.dictShortcut, cbDictSc, nullptr);
-  addSwitch(c, "Bridge link over BLE", g_settings.bleLink, cbBleLink, nullptr);
+  addSwitch(c, big() ? "Bridge link" : "Bridge link over BLE", g_settings.bleLink, cbBleLink, nullptr);
 
-  c = sectionCard(list, "Voice");
+  c = sectionCard(L, "Voice");
   addDropdown(c, "Microphone", "Host Mac\nDevice mic (P3)", g_settings.dictSource, cbDictSrc, nullptr);
   addDropdown(c, "Device mic sends to", "Ask Muse\nType into Mac", g_settings.dictTarget, cbDictTgt, nullptr);
   addSlider(c, "Mic gain", 1, 8, g_settings.micGain, cbMicGain, nullptr);
   addAction(c, "Mic test", "", cbMicTest, nullptr);
 
-  c = sectionCard(list, "Display");
+  c = sectionCard(R, "Display");
   addSlider(c, "Brightness", 10, 255, g_settings.brightness, cbBright, nullptr);
   { static const uint16_t v[] = {10, 30, 60, 120, 300, 600, 0}; uint16_t sel = 3; for (int i = 0; i < 7; i++) if (v[i] == g_settings.screenTimeout) sel = i;
     addDropdown(c, "Dim after", "10 s\n30 s\n1 min\n2 min\n5 min\n10 min\nNever", sel, cbTimeout, nullptr); }
@@ -85,7 +91,7 @@ void showSettings() {
   addSwitch(c, "Invert colors", g_settings.invertColors, cbInvert, nullptr);
   addSwitch(c, "Swap red and blue", g_settings.bgrOrder, cbBgr, nullptr);
 
-  c = sectionCard(list, "Touch");
+  c = sectionCard(R, "Touch");
   addAction(c, "Calibrate touch", "", cbCal, nullptr);
   addAction(c, "Touch test", "draw", cbTouchTest, nullptr);
   { static const uint16_t v[] = {250, 400, 600, 900}; uint16_t sel = 1; for (int i = 0; i < 4; i++) if (v[i] == g_settings.longPressMs) sel = i;
@@ -93,7 +99,7 @@ void showSettings() {
   addDropdown(c, "Sensitivity", "Instant\nNormal\nFirm\nDeliberate", g_settings.touchDebounce - 1, cbDebounce, nullptr);
   addSwitch(c, "LED flash on tap", g_settings.hapticLed, cbTapLed, nullptr);
 
-  c = sectionCard(list, "Apps");
+  c = sectionCard(L, "Apps");
   { auto apps = applets::list(); String auto_; for (auto& a : apps) if (a.autostart) auto_ = a.name;
     char n[40]; snprintf(n, sizeof(n), "%u installed", (unsigned)apps.size()); addAction(c, "Applets", n, cbApps, nullptr);
     addAction(c, "Running", applets::running() ? applets::runningName().c_str() : "none", nullptr, nullptr);
@@ -101,11 +107,11 @@ void showSettings() {
     { size_t tot = LittleFS.totalBytes(), used = LittleFS.usedBytes(); char f[40]; snprintf(f, sizeof(f), "%u KB free of %u", (unsigned)((tot - used) / 1024), (unsigned)(tot / 1024)); addAction(c, "Storage", f, nullptr, nullptr); }
     if (!apps.empty()) addAction(c, "Remove all applets", "", cbRemoveApplets, nullptr); }
 
-  c = sectionCard(list, "Storage");
+  c = sectionCard(L, "Storage");
   addAction(c, "microSD", sdInfo().c_str(), nullptr, nullptr);
   addSwitch(c, "Log chats to microSD", g_settings.sdLog, cbSdLog, nullptr);
 
-  c = sectionCard(list, "About");
+  c = sectionCard(R, "About");
   addAction(c, "Firmware", "Musecorder " AITL_FW_VERSION " / " AITL_BOARD_NAME, nullptr, nullptr);
   addAction(c, "Device ID", app::deviceId().c_str(), nullptr, nullptr);
   { String b = app::bridgeName.length() ? app::bridgeName + " " + app::bridgeVersion : String("none"); addAction(c, "Bridge", b.c_str(), nullptr, nullptr); }

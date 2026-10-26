@@ -38,7 +38,7 @@ lv_obj_t* statusBar(lv_obj_t* scr, const char*, const char* ttl, bool backBtn) {
   lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_column(bar, 8, 0);
   if (backBtn) { lv_obj_t* b = makeIconButton(bar, LV_SYMBOL_LEFT, chipH() + 8, backCb); lv_obj_set_ext_click_area(b, 10); }
   else { lv_obj_t* o = orb(bar, chipH() - 4, false); (void)o; }
-  lv_obj_t* t = makeLabel(bar, ttl, &title); lv_obj_set_style_text_font(t, big() ? &lv_font_montserrat_20 : &lv_font_montserrat_18, 0); lv_obj_set_flex_grow(t, 1); lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
+  lv_obj_t* t = makeLabel(bar, ttl, &title); lv_obj_set_style_text_font(t, big() ? &lv_font_montserrat_24 : &lv_font_montserrat_18, 0); lv_obj_set_flex_grow(t, 1); lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
   return bar;
 }
 lv_obj_t* scrollList(lv_obj_t* scr) {
@@ -125,10 +125,10 @@ using namespace ui_int;
 // ---------------- boot ----------------
 void showBoot() {
   s_boot = newScreen(); lv_obj_set_flex_align(s_boot, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_row(s_boot, big() ? 8 : 4, 0);
-  orb(s_boot, big() ? 72 : 56);
+  orb(s_boot, big() ? 140 : 56);
   lv_obj_t* name = makeLabel(s_boot, "Musecorder", &title); lv_obj_set_style_text_font(name, big() ? &lv_font_montserrat_28 : &lv_font_montserrat_20, 0);
-  lv_obj_t* tag = makeLabel(s_boot, "Your Muse, in your hand.", &caption);
-  lv_obj_t* box = lv_obj_create(s_boot); lv_obj_remove_style_all(box); lv_obj_set_size(box, LV_PCT(86), big() ? 84 : 58); lv_obj_set_style_pad_top(box, 4, 0);
+  lv_obj_t* tag = makeLabel(s_boot, "Your Muse, in your hand.", &caption); if (big()) lv_obj_set_style_text_font(tag, &lv_font_montserrat_18, 0);
+  lv_obj_t* box = lv_obj_create(s_boot); lv_obj_remove_style_all(box); lv_obj_set_size(box, LV_PCT(86), big() ? 50 : 58); lv_obj_set_style_pad_top(box, 4, 0);
   s_bootLog = lv_label_create(box); lv_label_set_text(s_bootLog, s_bootText.c_str()); lv_obj_set_width(s_bootLog, LV_PCT(100)); lv_label_set_long_mode(s_bootLog, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(s_bootLog, fontLabel(), 0); lv_obj_set_style_text_color(s_bootLog, lv_color_hex(MU_DIM), 0); lv_obj_set_style_text_align(s_bootLog, LV_TEXT_ALIGN_CENTER, 0);
   (void)tag; lv_scr_load(s_boot);
@@ -136,7 +136,7 @@ void showBoot() {
 void bootLog(const char* line) {
   if (!s_bootLog) return;
   s_bootText += line; s_bootText += "\n";
-  int lines = 0; for (int i = s_bootText.length() - 1; i >= 0; i--) if (s_bootText[i] == '\n' && ++lines > (big() ? 5 : 4)) { s_bootText = s_bootText.substring(i + 1); break; }
+  int lines = 0; for (int i = s_bootText.length() - 1; i >= 0; i--) if (s_bootText[i] == '\n' && ++lines > (big() ? 2 : 4)) { s_bootText = s_bootText.substring(i + 1); break; }
   lv_label_set_text(s_bootLog, s_bootText.c_str()); lv_timer_handler();
 }
 
@@ -163,8 +163,11 @@ static String modelName() {
   if (m.startsWith("muse-code/")) return "Muse Code"; int slash = m.indexOf('/'); if (slash > 0) m = m.substring(slash + 1);
   m.replace("muse-spark-", "Muse Spark "); return m;
 }
+static lv_obj_t* s_statusLine = nullptr;   // big layout only
+static lv_coord_t s_convW = 0;            // width of the conversation column (bubbles wrap against it)
 static void homeRefreshChips() {
   if (!s_home) return;
+  if (s_statusLine) { String st = app::bridgeLinked() ? (app::linkSummary() == "USB" ? "Linked over USB" : app::linkSummary() == "WIFI" ? "Linked over Wi-Fi" : "Linked over Bluetooth") : String("Not linked"); lv_label_set_text(s_statusLine, st.c_str()); }
   setChip(s_modelChip, LV_SYMBOL_CHARGE, modelName().c_str());
   setChip(s_chatChip, LV_SYMBOL_LIST, app::currentChatTitle.length() ? app::currentChatTitle.c_str() : "Chats");
   bool linked = app::bridgeLinked();
@@ -185,7 +188,8 @@ static void emptyHint(lv_obj_t* parent, const char* icon, const char* text) {
   lv_obj_t* r = lv_obj_create(parent); lv_obj_remove_style_all(r); lv_obj_set_size(r, LV_PCT(100), LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(r, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_column(r, 8, 0);
   lv_obj_t* i = makeLabel(r, icon, &caption); lv_obj_set_style_text_color(i, lv_color_hex(MU_TEAL), 0);
-  makeLabel(r, text, &caption);
+  lv_obj_t* t = makeLabel(r, text, &caption); lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
+  if (big()) { lv_obj_set_flex_grow(t, 1); lv_obj_set_flex_align(r, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_left(r, 8, 0); }   // flex gives the label its width, so it wraps
 }
 // Long labels get quadratic in LVGL; keep each label to a paragraph. One top-level child of s_msgList per chunk.
 static const size_t kChunkChars = 220;
@@ -195,10 +199,10 @@ static lv_obj_t* addChunk(const app::Msg& m, const String& text, bool first) {
     lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(r, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); if (first) lv_obj_set_style_pad_top(r, big() ? 6 : 4, 0);
     lv_obj_t* b = lv_obj_create(r); lv_obj_remove_style_all(b); lv_obj_set_style_bg_color(b, lv_color_hex(MU_BUBBLE), 0); lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(b, big() ? 18 : 14, 0); lv_obj_set_style_pad_ver(b, big() ? 8 : 6, 0); lv_obj_set_style_pad_hor(b, big() ? 12 : 10, 0);
-    lv_obj_set_width(b, LV_SIZE_CONTENT); lv_obj_set_style_max_width(b, LV_PCT(84), 0); lv_obj_set_height(b, LV_SIZE_CONTENT); lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_width(b, LV_SIZE_CONTENT); lv_obj_set_style_max_width(b, LV_PCT(86), 0); lv_obj_set_height(b, LV_SIZE_CONTENT); lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t* l = lv_label_create(b); lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(l, fontBody(), 0); lv_obj_set_style_text_color(l, lv_color_hex(MU_TEXT), 0); lv_label_set_text(l, text.c_str());
-    lv_coord_t maxw = (lv_coord_t)(displayW() * 0.84f) - (big() ? 24 : 20);
+    lv_coord_t maxw = (lv_coord_t)((s_convW ? s_convW : displayW()) * 0.84f) - (big() ? 24 : 20);
     lv_point_t sz; lv_txt_get_size(&sz, text.c_str(), fontBody(), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     lv_obj_set_width(l, sz.x < maxw ? sz.x : maxw);   // short messages keep a tight bubble; long ones wrap at 84%
     return r;
@@ -236,11 +240,13 @@ static void homeRefreshTranscript(bool deltaOnly) {
   if (msgs.empty()) {
     lv_obj_add_flag(s_msgList, LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clean(s_empty); s_msgCount = 0; s_lastMsgLabels = 0;
-    orb(s_empty, big() ? 60 : 34);
-    lv_obj_t* h = makeLabel(s_empty, app::bridgeLinked() ? "Hi, I'm your Muse device." : "Not linked yet", &body); lv_obj_set_style_text_font(h, big() ? &lv_font_montserrat_20 : &lv_font_montserrat_16, 0);
+    if (!big()) orb(s_empty, 34);
+    lv_obj_t* h = makeLabel(s_empty, app::bridgeLinked() ? "Hi, I'm your Muse device." : "Not linked yet", &body); lv_obj_set_style_text_font(h, big() ? &lv_font_montserrat_24 : &lv_font_montserrat_16, 0);
+    if (big()) { lv_obj_set_style_pad_bottom(h, 8, 0); lv_obj_set_width(h, LV_PCT(100)); lv_label_set_long_mode(h, LV_LABEL_LONG_WRAP); lv_obj_set_style_text_align(h, LV_TEXT_ALIGN_CENTER, 0); }
     if (app::bridgeLinked()) {
-      emptyHint(s_empty, LV_SYMBOL_KEYBOARD, "Ask anything, or type into the Mac");
-      emptyHint(s_empty, LV_SYMBOL_LIST, "Apps: tools Muse built for this device");
+      emptyHint(s_empty, LV_SYMBOL_KEYBOARD, big() ? "Ask, or type into your Mac" : "Ask anything, or type into the Mac");
+      emptyHint(s_empty, LV_SYMBOL_LIST, big() ? "Apps: tools Muse built for you" : "Apps: tools Muse built for this device");
+      if (big()) emptyHint(s_empty, LV_SYMBOL_AUDIO, "Dictate into your Mac");
     } else {
       emptyHint(s_empty, LV_SYMBOL_USB, "Plug in and run: musecorder serve");
       emptyHint(s_empty, LV_SYMBOL_BLUETOOTH, "or Settings > Bluetooth link");
@@ -300,7 +306,71 @@ static lv_obj_t* miniBtn(lv_obj_t* parent, const char* sym, lv_event_cb_t cb, ui
   lv_obj_set_style_bg_color(b, lv_color_hex(MU_SURFACE), 0); lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0); return b;
 }
 
+static lv_obj_t* paneCol(lv_obj_t* parent) { lv_obj_t* c = lv_obj_create(parent); lv_obj_remove_style_all(c); lv_obj_set_height(c, LV_PCT(100)); lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN); lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE); return c; }
+static void buildConversation(lv_obj_t* parent) {
+  s_transcriptPanel = lv_obj_create(parent); lv_obj_remove_style_all(s_transcriptPanel); lv_obj_set_width(s_transcriptPanel, LV_PCT(100)); lv_obj_set_flex_grow(s_transcriptPanel, 1);
+  lv_obj_set_style_pad_hor(s_transcriptPanel, 4, 0); lv_obj_set_scroll_dir(s_transcriptPanel, LV_DIR_VER); lv_obj_set_scrollbar_mode(s_transcriptPanel, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_clear_flag(s_transcriptPanel, LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_ELASTIC);
+  s_msgList = lv_obj_create(s_transcriptPanel); lv_obj_remove_style_all(s_msgList); lv_obj_set_width(s_msgList, LV_PCT(100)); lv_obj_set_height(s_msgList, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(s_msgList, LV_FLEX_FLOW_COLUMN); lv_obj_set_style_pad_row(s_msgList, big() ? 8 : 4, 0); lv_obj_clear_flag(s_msgList, LV_OBJ_FLAG_SCROLLABLE);
+  s_msgCount = 0; s_lastMsgLabels = 0;
+  s_empty = lv_obj_create(s_transcriptPanel); lv_obj_remove_style_all(s_empty); lv_obj_set_size(s_empty, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_flex_flow(s_empty, LV_FLEX_FLOW_COLUMN); lv_obj_set_flex_align(s_empty, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_row(s_empty, big() ? 8 : 3, 0);
+}
+static lv_obj_t* buildDock(lv_obj_t* parent) {
+  lv_obj_t* dock = lv_obj_create(parent); lv_obj_remove_style_all(dock); lv_obj_add_style(dock, &card, 0); lv_obj_set_style_radius(dock, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_pad_all(dock, 3, 0); lv_obj_set_size(dock, LV_PCT(100), dockH()); lv_obj_set_flex_flow(dock, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(dock, 2, 0);
+  s_dictBtn = dockBtn(dock, LV_SYMBOL_AUDIO, "Dictate", evDict);
+  dockBtn(dock, LV_SYMBOL_KEYBOARD, "Ask", evType); dockBtn(dock, LV_SYMBOL_LIST, "Apps", evApps); dockBtn(dock, LV_SYMBOL_SETTINGS, "Settings", evSettings);
+  return dock;
+}
+// 480x320: identity pane on the left (orb, wordmark, status, chips), conversation + dock on the right.
+static void showHomeBig() {
+  s_home = newScreen(); lv_obj_set_flex_flow(s_home, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_all(s_home, 12, 0); lv_obj_set_style_pad_column(s_home, 16, 0);
+  const lv_coord_t W = displayW();
+  const lv_coord_t leftW = (W - 24 - 16) * 38 / 100; s_convW = W - 24 - 16 - leftW - 8;
+  lv_obj_t* left = paneCol(s_home); lv_obj_set_width(left, leftW); lv_obj_set_flex_align(left, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_row(left, 6, 0);
+  s_orb = orb(left, 104);
+  lv_obj_t* wm = makeLabel(left, "Musecorder", &title); lv_obj_set_style_text_font(wm, &lv_font_montserrat_24, 0);
+  s_statusLine = makeLabel(left, "", &caption); lv_label_set_long_mode(s_statusLine, LV_LABEL_LONG_WRAP); lv_obj_set_width(s_statusLine, LV_PCT(100)); lv_obj_set_style_text_align(s_statusLine, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_t* sp = lv_obj_create(left); lv_obj_remove_style_all(sp); lv_obj_set_width(sp, 1); lv_obj_set_flex_grow(sp, 1);
+  s_modelChip = makeChip(left, LV_SYMBOL_CHARGE, "", evModels, leftW); lv_obj_set_size(s_modelChip, LV_PCT(100), 30); lv_obj_set_style_max_width(lv_obj_get_child(s_modelChip, 1), leftW - 50, 0);
+  s_chatChip = makeChip(left, LV_SYMBOL_LIST, "", evChats, leftW); lv_obj_set_size(s_chatChip, LV_PCT(100), 30); lv_obj_set_style_max_width(lv_obj_get_child(s_chatChip, 1), leftW - 50, 0); lv_obj_add_event_cb(s_chatChip, evNewChat, LV_EVENT_LONG_PRESSED, nullptr);
+  if (applets::running() && !applets::onScreen()) {
+    lv_obj_t* st = lv_btn_create(left); lv_obj_remove_style_all(st); lv_obj_add_style(st, &pill, 0); lv_obj_add_style(st, &pressed, LV_STATE_PRESSED);
+    lv_obj_set_size(st, LV_PCT(100), 30); lv_obj_set_style_pad_ver(st, 0, 0); lv_obj_set_flex_flow(st, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(st, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_column(st, 8, 0);
+    lv_obj_t* d = lv_obj_create(st); lv_obj_remove_style_all(d); lv_obj_set_size(d, 10, 10); lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, 0); gradient(d, false);
+    lv_obj_t* l = makeLabel(st, (applets::runningName() + " is running").c_str(), &caption); lv_label_set_long_mode(l, LV_LABEL_LONG_DOT); lv_obj_set_flex_grow(l, 1);
+    lv_obj_add_event_cb(st, [](lv_event_t*) { applets::buildScreen(); }, LV_EVENT_CLICKED, nullptr);
+  }
+  lv_obj_t* right = paneCol(s_home); lv_obj_set_flex_grow(right, 1); lv_obj_set_style_pad_row(right, 8, 0);
+  lv_obj_t* bar = lv_obj_create(right); lv_obj_remove_style_all(bar); lv_obj_set_size(bar, LV_PCT(100), chipH());
+  lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_column(bar, 8, 0);
+  lv_obj_t* t = lv_obj_create(bar); lv_obj_remove_style_all(t); lv_obj_set_height(t, 1); lv_obj_set_flex_grow(t, 1);
+  s_bell = makeChip(bar, LV_SYMBOL_BELL, "", evInbox, 120); lv_obj_set_style_text_color(lv_obj_get_child(s_bell, 0), lv_color_hex(MU_WARN), 0);
+  s_linkPill = makeChip(bar, "", "", evSettings, 160);
+  s_linkDot = lv_obj_create(s_linkPill); lv_obj_remove_style_all(s_linkDot); lv_obj_set_size(s_linkDot, 10, 10); lv_obj_set_style_radius(s_linkDot, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_opa(s_linkDot, LV_OPA_COVER, 0); lv_obj_move_to_index(s_linkDot, 0); lv_obj_del(lv_obj_get_child(s_linkPill, 1));
+  miniBtn(bar, LV_SYMBOL_UP, evPageUp, MU_MUTED); miniBtn(bar, LV_SYMBOL_DOWN, evPageDown, MU_MUTED);
+  buildConversation(right);
+  lv_obj_t* fl = lv_obj_create(right); lv_obj_remove_style_all(fl); lv_obj_add_flag(fl, LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_FLOATING);
+  lv_obj_set_size(fl, LV_SIZE_CONTENT, 38); lv_obj_set_flex_flow(fl, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(fl, 6, 0);
+  lv_obj_align(fl, LV_ALIGN_BOTTOM_RIGHT, -8, -(dockH() + 12));
+  s_stopBtn = miniBtn(fl, LV_SYMBOL_STOP, evStop, MU_WARN); s_copyBtn = miniBtn(fl, LV_SYMBOL_COPY, evCopy, MU_TEAL); s_pasteBtn = miniBtn(fl, LV_SYMBOL_PASTE, evPaste, MU_OK);
+  s_np = lv_obj_create(right); lv_obj_remove_style_all(s_np); lv_obj_add_style(s_np, &pill, 0); lv_obj_set_style_pad_ver(s_np, 2, 0); lv_obj_set_size(s_np, LV_PCT(100), chipH() + 10);
+  lv_obj_set_flex_flow(s_np, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(s_np, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_column(s_np, 8, 0); lv_obj_clear_flag(s_np, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* npIcon = makeLabel(s_np, LV_SYMBOL_AUDIO, &caption); lv_obj_set_style_text_color(npIcon, lv_color_hex(MU_TEAL), 0);
+  s_npLabel = makeLabel(s_np, "", &caption); lv_label_set_long_mode(s_npLabel, LV_LABEL_LONG_SCROLL_CIRCULAR); lv_obj_set_flex_grow(s_npLabel, 1);
+  miniBtn(s_np, LV_SYMBOL_PREV, evNpPrev, MU_MUTED); s_npPlay = miniBtn(s_np, LV_SYMBOL_PLAY, evNpPlay, MU_TEXT); miniBtn(s_np, LV_SYMBOL_NEXT, evNpNext, MU_MUTED);
+  lv_obj_add_flag(s_np, LV_OBJ_FLAG_HIDDEN);
+  buildDock(right);
+  homeRefreshChips(); homeRefreshTranscript(false); homeRefreshBell(); homeRefreshNp();
+  load(s_home);
+}
+
 void showHome() {
+  s_statusLine = nullptr; s_convW = 0;
+  if (big()) { showHomeBig(); return; }
   s_home = newScreen(); lv_obj_set_style_pad_row(s_home, big() ? 6 : 4, 0);
   const lv_coord_t W = displayW();
   // top bar: orb + wordmark | bell · link pill

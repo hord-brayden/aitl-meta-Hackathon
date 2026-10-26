@@ -25,3 +25,12 @@ primary pills, badges and progress indicators; success #34d399, warning #fbbf24,
 are full pills, tiles radius 12–14, no borders (elevation by lighter surface), hairlines only between rows. Montserrat
 12/14/16/18/20/28 + 48 for applet numerals; sentence case everywhere. The orb (`theme::orb`) is the signature element: a
 gradient circle with a breathing halo that doubles as the device's status. Touch targets ≥ 34 px.
+
+## Large-screen profile (`AITL_UI_BIG`, 480×320 boards such as `hosyond40r`)
+`theme::big()` switches to a 12/16/24 px rhythm: 18 px body, 24 px titles, 52 px rows, 56 px buttons, 60 px dock.
+Home becomes two panes: left (38 %) orb 104 px, wordmark, link status, model and chat chips, background-applet pill;
+right: bell / link pill / page buttons, the conversation, floating stop·copy·paste, the dock. Apps is a 3-column grid
+with the "Back to …" and "Mac actions" pills in a top row. Applet content is a 420 px column centered on screen
+(`xl` numerals 36, `xxl` 48, charts 140 px). Settings lays its cards in two columns. Boot: orb 140, wordmark 28.
+Draw buffers on 480-wide panels are 2 × 480×12 (23 KB) so ≈ 80 KB of heap stays free with an applet on screen.
+Captures: `docs/img/4in-*.png`.

@@ -32,9 +32,10 @@ const char* symbolFor(const String& n) {
 }
 
 static const lv_font_t* fontFor(const String& size) {
-  if (size == "s") return &lv_font_montserrat_12; if (size == "l") return &lv_font_montserrat_20;
-  if (size == "xl") return &lv_font_montserrat_28; if (size == "xxl") return &lv_font_montserrat_48;
-  return &lv_font_montserrat_14;
+  if (size == "s") return fontSmall(); if (size == "l") return &lv_font_montserrat_20;
+  if (size == "xl") return big() ? &lv_font_montserrat_36 : &lv_font_montserrat_28; if (size == "xxl") return &lv_font_montserrat_48;
+  if (size == "l") return big() ? &lv_font_montserrat_24 : &lv_font_montserrat_20;
+  return fontBody();
 }
 static uint32_t colorFor(JsonObject w, uint32_t def) {
   String c = R(w["color"]); if (c.startsWith("#") && c.length() == 7) return strtoul(c.c_str() + 1, nullptr, 16);
@@ -142,7 +143,7 @@ static void build(lv_obj_t* parent, JsonObject w, int depth) {
     lv_obj_set_style_text_font(l, big() ? &lv_font_unscii_16 : &lv_font_unscii_8, 0); lv_obj_set_style_text_color(l, lv_color_hex(colorFor(w, MU_OK)), 0);
     s_bind.push_back({l, 6, w});
   } else if (type == "chart") {
-    o = lv_chart_create(parent); lv_obj_set_size(o, LV_PCT(100), (int)N(w["h"], big() ? 110 : 80));
+    o = lv_chart_create(parent); lv_obj_set_size(o, LV_PCT(100), (int)N(w["h"], big() ? 140 : 80));
     lv_chart_set_type(o, R(w["kind"]) == "bar" ? LV_CHART_TYPE_BAR : LV_CHART_TYPE_LINE);
     int pts = (int)N(w["points"], 30); if (pts < 2) pts = 2; if (pts > 120) pts = 120; lv_chart_set_point_count(o, pts);
     lv_chart_set_range(o, LV_CHART_AXIS_PRIMARY_Y, (int)N(w["min"], 0), (int)N(w["max"], 100));
@@ -193,9 +194,10 @@ void buildScreen() {
   lv_obj_t* bar = statusBar(scr, "", runningName().c_str(), true);
   lv_obj_t* menu = makeIconButton(bar, LV_SYMBOL_LIST, chipH() + 8, evMenu);
   (void)menu;
-  lv_obj_t* body = lv_obj_create(scr); lv_obj_remove_style_all(body); lv_obj_set_width(body, LV_PCT(100)); lv_obj_set_flex_grow(body, 1);
+  if (big()) lv_obj_set_flex_align(scr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);   // content column centered
+  lv_obj_t* body = lv_obj_create(scr); lv_obj_remove_style_all(body); lv_obj_set_width(body, big() ? 420 : LV_PCT(100)); lv_obj_set_flex_grow(body, 1);
   lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN); lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_row(body, big() ? 8 : 6, 0); lv_obj_set_style_pad_hor(body, 2, 0);
+  lv_obj_set_style_pad_row(body, big() ? 12 : 6, 0); lv_obj_set_style_pad_hor(body, 2, 0);
   lv_obj_set_scroll_dir(body, LV_DIR_VER); lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
   buildList(body, uiArray(), 0);
   lv_obj_add_event_cb(scr, evScrDeleted, LV_EVENT_DELETE, nullptr);
@@ -255,8 +257,13 @@ void showApps() {
   s_apps = applets::list();
   lv_obj_t* scr = newScreen(); statusBar(scr, "", "Apps", true);
   lv_obj_t* grid = lv_obj_create(scr); lv_obj_remove_style_all(grid); lv_obj_set_width(grid, LV_PCT(100)); lv_obj_set_flex_grow(grid, 1);
-  lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP); lv_obj_set_style_pad_gap(grid, 6, 0); lv_obj_set_scroll_dir(grid, LV_DIR_VER); lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_AUTO);
-  if (applets::running() && !applets::onScreen()) {
+  lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP); lv_obj_set_style_pad_gap(grid, big() ? 10 : 6, 0); lv_obj_set_scroll_dir(grid, LV_DIR_VER); lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_AUTO);
+  if (big()) {
+    lv_obj_t* top = lv_obj_create(grid); lv_obj_remove_style_all(top); lv_obj_set_size(top, LV_PCT(100), btnH() - 8); lv_obj_set_flex_flow(top, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_column(top, 8, 0);
+    if (applets::running() && !applets::onScreen()) { lv_obj_t* b = makeButton(top, (String(LV_SYMBOL_PLAY "  Back to ") + applets::runningName()).c_str(), true); lv_obj_set_height(b, btnH() - 8); lv_obj_set_style_pad_ver(b, 0, 0); lv_obj_add_event_cb(b, evResume, LV_EVENT_CLICKED, nullptr); }
+    lv_obj_t* sp = lv_obj_create(top); lv_obj_remove_style_all(sp); lv_obj_set_height(sp, 1); lv_obj_set_flex_grow(sp, 1);
+    lv_obj_t* mb = makeButton(top, "Mac actions  " LV_SYMBOL_RIGHT); lv_obj_set_height(mb, btnH() - 8); lv_obj_set_style_pad_ver(mb, 0, 0); lv_obj_add_event_cb(mb, evMacActions, LV_EVENT_CLICKED, nullptr);
+  } else if (applets::running() && !applets::onScreen()) {
     lv_obj_t* b = makeButton(grid, (String(LV_SYMBOL_PLAY "  Back to ") + applets::runningName()).c_str(), true); lv_obj_set_size(b, LV_PCT(100), btnH()); lv_obj_add_event_cb(b, evResume, LV_EVENT_CLICKED, nullptr);
   }
   if (s_apps.empty()) {
@@ -269,17 +276,20 @@ void showApps() {
   for (size_t i = 0; i < s_apps.size(); i++) {
     auto& a = s_apps[i];
     lv_obj_t* b = lv_btn_create(grid); lv_obj_remove_style_all(b); lv_obj_add_style(b, &card, 0); lv_obj_add_style(b, &pressed, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(b, 14, 0); lv_obj_set_size(b, LV_PCT(49), btnH() + (big() ? 36 : 28)); lv_obj_set_style_pad_all(b, 6, 0);
+    lv_obj_set_style_radius(b, 14, 0); lv_obj_set_size(b, big() ? LV_PCT(32) : LV_PCT(49), big() ? 104 : btnH() + 28); lv_obj_set_style_pad_all(b, big() ? 10 : 6, 0);
     if (a.id == applets::runningId()) lv_obj_set_style_bg_color(b, lv_color_hex(MU_SURFACE2), 0);
     lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN); lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_row(b, 4, 0);
     const char* sym = applets::symbolFor(a.icon);
-    badge(b, sym ? sym : (a.icon.length() ? a.icon.substring(0, 2).c_str() : LV_SYMBOL_FILE), big() ? 40 : 30);
+    badge(b, sym ? sym : (a.icon.length() ? a.icon.substring(0, 2).c_str() : LV_SYMBOL_FILE), big() ? 44 : 30);
     lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, a.name.c_str()); lv_obj_set_style_text_font(l, fontSmall(), 0); lv_label_set_long_mode(l, LV_LABEL_LONG_DOT); lv_obj_set_width(l, LV_PCT(100)); lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_add_event_cb(b, evOpenApp, LV_EVENT_CLICKED, (void*)(uintptr_t)i); lv_obj_add_event_cb(b, evOpenApp, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)i);
   }
-  lv_obj_t* foot = lv_obj_create(scr); lv_obj_remove_style_all(foot); lv_obj_set_size(foot, LV_PCT(100), btnH()); lv_obj_set_flex_flow(foot, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(foot, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_t* hint = makeLabel(foot, s_apps.empty() ? "" : "Hold a tile for options", &caption); lv_obj_set_style_text_color(hint, lv_color_hex(MU_DIM), 0);
-  lv_obj_t* mb = makeButton(foot, "Mac actions  " LV_SYMBOL_RIGHT); lv_obj_set_height(mb, btnH() - 4); lv_obj_set_style_pad_ver(mb, 0, 0); lv_obj_add_event_cb(mb, evMacActions, LV_EVENT_CLICKED, nullptr);
+  if (big()) { lv_obj_t* hint = makeLabel(scr, s_apps.empty() ? "" : "Hold a tile for options", &caption); lv_obj_set_style_text_color(hint, lv_color_hex(MU_DIM), 0); }
+  else {
+    lv_obj_t* foot = lv_obj_create(scr); lv_obj_remove_style_all(foot); lv_obj_set_size(foot, LV_PCT(100), btnH()); lv_obj_set_flex_flow(foot, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(foot, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t* hint = makeLabel(foot, s_apps.empty() ? "" : "Hold a tile for options", &caption); lv_obj_set_style_text_color(hint, lv_color_hex(MU_DIM), 0);
+    lv_obj_t* mb = makeButton(foot, "Mac actions  " LV_SYMBOL_RIGHT); lv_obj_set_height(mb, btnH() - 4); lv_obj_set_style_pad_ver(mb, 0, 0); lv_obj_add_event_cb(mb, evMacActions, LV_EVENT_CLICKED, nullptr);
+  }
   load(scr);
 }
 void showApplet() { if (applets::running()) applets::buildScreen(); else showApps(); }
