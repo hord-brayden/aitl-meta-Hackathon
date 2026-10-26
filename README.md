@@ -20,6 +20,9 @@
                                                                       └─────────────────┘
 ```
 
+<p align="center"><img src="docs/img/applet-door-tally.png" width="320" alt="Door Tally applet running on the device"> <img src="docs/img/boot.png" width="320" alt="Boot screen"></p>
+<p align="center"><i>Left: the door-tally applet exactly as the panel shows it (captured over the link with <code>musecorder screenshot</code>). Right: boot.</i></p>
+
 ## The idea
 
 You are at a ball game and your job is to count people through door A and post the tally every five minutes. You
