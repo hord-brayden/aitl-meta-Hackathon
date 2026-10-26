@@ -8,6 +8,10 @@
 #include "../ble/ble_hid.h"
 #include "../hal/mic.h"
 #include "../applets/applet.h"
+#if __has_include("avatar_img.h")
+#include "avatar_img.h"
+#define AITL_HAS_AVATAR 1
+#endif
 
 using namespace theme;
 namespace ui {
@@ -155,8 +159,12 @@ using namespace ui_int;
 void showBoot() {
   s_boot = newScreen();
   lv_obj_set_flex_align(s_boot, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+#if defined(AITL_HAS_AVATAR)
+  { lv_obj_t* av = lv_img_create(s_boot); lv_img_set_src(av, &avatar_img); lv_obj_set_style_radius(av, LV_RADIUS_CIRCLE, 0); lv_obj_set_style_clip_corner(av, true, 0); }
+#else
   lv_obj_t* mark = makeLabel(s_boot, "C" CO_BULLET "O", &monoBig);
   lv_obj_set_style_text_letter_space(mark, 6, 0);
+#endif
   lv_obj_t* name = makeLabel(s_boot, AITL_PRODUCT, &title);
   lv_obj_set_style_text_font(name, &lv_font_montserrat_28, 0); lv_obj_set_style_text_letter_space(name, 4, 0);
   lv_obj_t* sub = makeLabel(s_boot, "MUSE IN THE LOOP", &mono); lv_obj_set_style_text_color(sub, lv_color_hex(CO_ASH), 0);
@@ -365,6 +373,9 @@ void showHome() {
   lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_t* brandRow = lv_obj_create(bar); lv_obj_remove_style_all(brandRow); lv_obj_set_size(brandRow, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(brandRow, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(brandRow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END); lv_obj_set_style_pad_column(brandRow, 8, 0); lv_obj_set_style_pad_left(brandRow, 4, 0);
+#if defined(AITL_HAS_AVATAR)
+  { lv_obj_t* av = lv_img_create(brandRow); lv_img_set_src(av, &avatar_img); lv_img_set_zoom(av, (256 * (big() ? 28 : 20)) / AITL_AVATAR_SIZE); lv_img_set_size_mode(av, LV_IMG_SIZE_MODE_REAL); lv_obj_set_style_radius(av, LV_RADIUS_CIRCLE, 0); lv_obj_set_style_clip_corner(av, true, 0); }
+#endif
   lv_obj_t* wm = makeLabel(brandRow, AITL_PRODUCT, &body); lv_obj_set_style_text_font(wm, big() ? &lv_font_montserrat_20 : &lv_font_montserrat_16, 0); lv_obj_set_style_text_letter_space(wm, 3, 0);
   lv_obj_t* co = makeLabel(brandRow, "AITL", &mono); lv_obj_set_style_pad_bottom(co, big() ? 3 : 2, 0);
   lv_obj_t* right = lv_obj_create(bar); lv_obj_remove_style_all(right); lv_obj_set_size(right, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
