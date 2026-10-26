@@ -20,8 +20,9 @@
                                                                       └─────────────────┘
 ```
 
-<p align="center"><img src="docs/img/applet-door-tally.png" width="320" alt="Door Tally applet running on the device"> <img src="docs/img/boot.png" width="320" alt="Boot screen"></p>
-<p align="center"><i>Left: the door-tally applet exactly as the panel shows it (captured over the link with <code>musecorder screenshot</code>). Right: boot.</i></p>
+<p align="center"><img src="docs/img/home.png" width="320" alt="Home: a conversation with Muse"> <img src="docs/img/applet-door-tally.png" width="320" alt="Door Tally applet running on the device"></p>
+<p align="center"><img src="docs/img/apps.png" width="320" alt="Apps launcher"> <img src="docs/img/settings.png" width="320" alt="Settings"></p>
+<p align="center"><i>Captured from the panel itself over the link (<code>musecorder screenshot</code>). Left to right: home with a Muse conversation, the door-tally applet, the launcher, settings.</i></p>
 
 ## The idea
 

@@ -39,7 +39,7 @@ static const lv_font_t* fontFor(const String& size) {
 static uint32_t colorFor(JsonObject w, uint32_t def) {
   String c = R(w["color"]); if (c.startsWith("#") && c.length() == 7) return strtoul(c.c_str() + 1, nullptr, 16);
   String st = R(w["style"]);
-  if (st == "muted") return CO_MUTE; if (st == "accent" || st == "mono") return CO_CAERULEI; if (st == "warn") return CO_AMBER; if (st == "ok") return CO_PHOSPHOR; if (st == "error") return CO_RED;
+  if (st == "muted") return MU_MUTED; if (st == "accent" || st == "mono") return MU_TEAL; if (st == "warn") return MU_WARN; if (st == "ok") return MU_OK; if (st == "error") return MU_DANGER;
   return def;
 }
 static bool hiddenNow(JsonObject w) { JsonVariant h = w["hidden"]; if (h.isNull()) return false; if (h.is<const char*>()) return expr::renderTyped(h.as<const char*>(), resolverCb, nullptr).truthy(); return h.as<bool>(); }
@@ -86,16 +86,17 @@ static void build(lv_obj_t* parent, JsonObject w, int depth) {
   lv_obj_t* o = nullptr;
   if (type == "label" || type == "value") {
     o = lv_label_create(parent); lv_obj_set_width(o, LV_PCT(100)); lv_label_set_long_mode(o, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(o, fontFor(R(w["size"])), 0); lv_obj_set_style_text_color(o, lv_color_hex(colorFor(w, CO_BONE)), 0);
-    String st = R(w["style"]); if (st == "mono") lv_obj_set_style_text_letter_space(o, 1, 0);
+    lv_obj_set_style_text_font(o, fontFor(R(w["size"])), 0); lv_obj_set_style_text_color(o, lv_color_hex(colorFor(w, MU_TEXT)), 0);
+    String st = R(w["style"]); if (st == "mono") lv_obj_set_style_text_font(o, fontSmall(), 0);
     String al = R(w["align"]); lv_obj_set_style_text_align(o, al == "center" ? LV_TEXT_ALIGN_CENTER : al == "right" ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_text(o, R(w["text"]).c_str());
     s_bind.push_back({o, 0, w});
   } else if (type == "button") {
     String st = R(w["style"]);
     o = makeButton(parent, "", st == "primary");
-    if (st == "danger") { lv_obj_set_style_bg_color(o, lv_color_hex(0x3a0a12), 0); lv_obj_set_style_border_color(o, lv_color_hex(CO_RED), 0); }
-    if (st == "ghost") { lv_obj_set_style_bg_opa(o, LV_OPA_20, 0); }
+    if (st == "danger") { lv_obj_set_style_bg_color(o, lv_color_hex(0x3a1a24), 0); lv_obj_set_style_text_color(o, lv_color_hex(MU_DANGER), 0); }
+    if (st == "ghost") { lv_obj_set_style_bg_opa(o, LV_OPA_TRANSP, 0); lv_obj_set_style_border_width(o, 1, 0); lv_obj_set_style_border_color(o, lv_color_hex(MU_LINE), 0); }
+    lv_obj_set_style_radius(o, 14, 0);
     int h = (int)N(w["h"], 0); lv_obj_set_height(o, h > 0 ? h : btnH() + 6);
     int grow = (int)N(w["grow"], depth > 0 ? 1 : 0); if (grow > 0) lv_obj_set_flex_grow(o, grow); else lv_obj_set_width(o, LV_PCT(100));
     lv_obj_t* l = lv_obj_get_child(o, 0); lv_label_set_text(l, R(w["text"]).c_str()); lv_obj_set_style_text_font(l, fontFor(R(w["size"]).length() ? R(w["size"]) : "m"), 0); lv_obj_center(l);
@@ -111,34 +112,34 @@ static void build(lv_obj_t* parent, JsonObject w, int depth) {
   } else if (type == "toggle") {
     o = row(parent, R(w["text"]).c_str());
     lv_obj_t* sw = lv_switch_create(o); lv_obj_set_size(sw, big() ? 62 : 50, big() ? 32 : 26);
-    lv_obj_set_style_bg_color(sw, lv_color_hex(CO_DEEP), 0); lv_obj_set_style_bg_color(sw, lv_color_hex(CO_CAERULEI), LV_PART_INDICATOR | LV_STATE_CHECKED); lv_obj_set_style_bg_color(sw, lv_color_hex(CO_BONE), LV_PART_KNOB);
+    lv_obj_set_style_bg_color(sw, lv_color_hex(MU_RAISED), 0); lv_obj_set_style_bg_color(sw, lv_color_hex(MU_TEAL), LV_PART_INDICATOR | LV_STATE_CHECKED); lv_obj_set_style_bg_color(sw, lv_color_hex(MU_TEXT), LV_PART_KNOB);
     if (getState(R(w["bind"])).truthy()) lv_obj_add_state(sw, LV_STATE_CHECKED);
     s_bind.push_back({sw, 3, w}); lv_obj_add_event_cb(sw, evToggle, LV_EVENT_VALUE_CHANGED, (void*)(uintptr_t)(s_bind.size() - 1));
     s_bind.push_back({lv_obj_get_child(o, 0), 0, w});   // the label text is a template too
   } else if (type == "slider") {
     o = lv_obj_create(parent); lv_obj_remove_style_all(o); lv_obj_set_width(o, LV_PCT(100)); lv_obj_set_height(o, LV_SIZE_CONTENT); lv_obj_set_flex_flow(o, LV_FLEX_FLOW_COLUMN); lv_obj_set_style_pad_all(o, 6, 0); lv_obj_set_style_pad_row(o, 8, 0);
-    if (!w["text"].isNull()) { lv_obj_t* l = makeLabel(o, R(w["text"]).c_str(), &muted); s_bind.push_back({l, 0, w}); }
+    if (!w["text"].isNull()) { lv_obj_t* l = makeLabel(o, R(w["text"]).c_str(), &caption); s_bind.push_back({l, 0, w}); }
     lv_obj_t* s = lv_slider_create(o); lv_slider_set_range(s, (int)N(w["min"], 0), (int)N(w["max"], 100)); lv_slider_set_value(s, (int)getState(R(w["bind"])).toNum(), LV_ANIM_OFF);
-    lv_obj_set_width(s, LV_PCT(96)); lv_obj_set_height(s, big() ? 14 : 10); lv_obj_set_style_bg_color(s, lv_color_hex(CO_DEEP), 0); lv_obj_set_style_bg_color(s, lv_color_hex(CO_CAERULEI), LV_PART_INDICATOR); lv_obj_set_style_bg_color(s, lv_color_hex(CO_BONE), LV_PART_KNOB); lv_obj_set_style_pad_all(s, big() ? 8 : 6, LV_PART_KNOB);
+    lv_obj_set_width(s, LV_PCT(96)); lv_obj_set_height(s, big() ? 14 : 10); lv_obj_set_style_bg_color(s, lv_color_hex(MU_RAISED), 0); lv_obj_set_style_bg_color(s, lv_color_hex(MU_TEAL), LV_PART_INDICATOR); lv_obj_set_style_bg_grad_color(s, lv_color_hex(MU_BLUE), LV_PART_INDICATOR); lv_obj_set_style_bg_grad_dir(s, LV_GRAD_DIR_HOR, LV_PART_INDICATOR); lv_obj_set_style_bg_color(s, lv_color_hex(MU_TEXT), LV_PART_KNOB); lv_obj_set_style_pad_all(s, big() ? 8 : 6, LV_PART_KNOB);
     s_bind.push_back({s, 4, w}); lv_obj_add_event_cb(s, evSlider, LV_EVENT_RELEASED, (void*)(uintptr_t)(s_bind.size() - 1));
   } else if (type == "bar") {
     o = lv_bar_create(parent); lv_obj_set_size(o, LV_PCT(100), big() ? 18 : 12); lv_bar_set_range(o, (int)N(w["min"], 0), (int)N(w["max"], 100));
-    lv_obj_set_style_bg_color(o, lv_color_hex(CO_DEEP), 0); lv_obj_set_style_bg_color(o, lv_color_hex(colorFor(w, CO_CAERULEI)), LV_PART_INDICATOR); lv_obj_set_style_radius(o, 4, 0); lv_obj_set_style_radius(o, 4, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(o, lv_color_hex(MU_SURFACE2), 0); lv_obj_set_style_bg_color(o, lv_color_hex(colorFor(w, MU_TEAL)), LV_PART_INDICATOR); if (w["color"].isNull()) { lv_obj_set_style_bg_grad_color(o, lv_color_hex(MU_BLUE), LV_PART_INDICATOR); lv_obj_set_style_bg_grad_dir(o, LV_GRAD_DIR_HOR, LV_PART_INDICATOR); } lv_obj_set_style_radius(o, 8, 0); lv_obj_set_style_radius(o, 8, LV_PART_INDICATOR);
     lv_bar_set_value(o, (int)N(w["value"], 0), LV_ANIM_OFF);
     s_bind.push_back({o, 1, w});
   } else if (type == "input") {
-    o = lv_btn_create(parent); lv_obj_remove_style_all(o); lv_obj_add_style(o, &panel, 0); lv_obj_add_style(o, &btnPressed, LV_STATE_PRESSED);
-    lv_obj_set_size(o, LV_PCT(100), LV_SIZE_CONTENT); lv_obj_set_style_min_height(o, rowH(), 0); lv_obj_set_style_border_color(o, lv_color_hex(CO_CAERULEI_D), 0);
+    o = lv_btn_create(parent); lv_obj_remove_style_all(o); lv_obj_add_style(o, &card, 0); lv_obj_add_style(o, &pressed, LV_STATE_PRESSED);
+    lv_obj_set_size(o, LV_PCT(100), LV_SIZE_CONTENT); lv_obj_set_style_min_height(o, rowH(), 0); lv_obj_set_style_radius(o, 14, 0);
     lv_obj_set_flex_flow(o, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(o, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_t* l = makeLabel(o, "", &body); lv_label_set_long_mode(l, LV_LABEL_LONG_DOT); lv_obj_set_flex_grow(l, 1);
-    lv_obj_t* ic = makeLabel(o, LV_SYMBOL_EDIT, &muted); (void)ic;
+    lv_obj_t* ic = makeLabel(o, LV_SYMBOL_EDIT, &caption); (void)ic;
     s_bind.push_back({l, 5, w}); lv_obj_add_event_cb(o, evInput, LV_EVENT_CLICKED, (void*)(uintptr_t)(s_bind.size() - 1));
   } else if (type == "log") {
-    o = lv_obj_create(parent); lv_obj_remove_style_all(o); lv_obj_add_style(o, &panel, 0); lv_obj_set_width(o, LV_PCT(100));
+    o = lv_obj_create(parent); lv_obj_remove_style_all(o); lv_obj_add_style(o, &card, 0); lv_obj_set_width(o, LV_PCT(100));
     int lines = (int)N(w["lines"], 6); lv_obj_set_height(o, lines * (big() ? 18 : 11) + 14);
     lv_obj_set_scroll_dir(o, LV_DIR_VER); lv_obj_set_scrollbar_mode(o, LV_SCROLLBAR_MODE_OFF); lv_obj_set_style_pad_all(o, 5, 0);
     lv_obj_t* l = lv_label_create(o); lv_obj_set_width(l, LV_PCT(100)); lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(l, big() ? &lv_font_unscii_16 : &lv_font_unscii_8, 0); lv_obj_set_style_text_color(l, lv_color_hex(colorFor(w, CO_PHOSPHOR)), 0);
+    lv_obj_set_style_text_font(l, big() ? &lv_font_unscii_16 : &lv_font_unscii_8, 0); lv_obj_set_style_text_color(l, lv_color_hex(colorFor(w, MU_OK)), 0);
     s_bind.push_back({l, 6, w});
   } else if (type == "chart") {
     o = lv_chart_create(parent); lv_obj_set_size(o, LV_PCT(100), (int)N(w["h"], big() ? 110 : 80));
@@ -146,16 +147,16 @@ static void build(lv_obj_t* parent, JsonObject w, int depth) {
     int pts = (int)N(w["points"], 30); if (pts < 2) pts = 2; if (pts > 120) pts = 120; lv_chart_set_point_count(o, pts);
     lv_chart_set_range(o, LV_CHART_AXIS_PRIMARY_Y, (int)N(w["min"], 0), (int)N(w["max"], 100));
     lv_chart_set_div_line_count(o, 3, 0); lv_chart_set_update_mode(o, LV_CHART_UPDATE_MODE_SHIFT);
-    lv_obj_set_style_bg_color(o, lv_color_hex(CO_ABYSS), 0); lv_obj_set_style_border_color(o, lv_color_hex(CO_MID), 0); lv_obj_set_style_line_color(o, lv_color_hex(CO_MID), 0); lv_obj_set_style_radius(o, 6, 0); lv_obj_set_style_pad_all(o, 4, 0);
+    lv_obj_set_style_bg_color(o, lv_color_hex(MU_SURFACE), 0); lv_obj_set_style_border_width(o, 0, 0); lv_obj_set_style_line_color(o, lv_color_hex(MU_LINE), 0); lv_obj_set_style_radius(o, 12, 0); lv_obj_set_style_pad_all(o, 4, 0);
     lv_obj_set_style_size(o, 0, LV_PART_INDICATOR); lv_obj_set_style_line_width(o, 2, LV_PART_ITEMS);
-    lv_chart_add_series(o, lv_color_hex(colorFor(w, CO_CAERULEI)), LV_CHART_AXIS_PRIMARY_Y);
+    lv_chart_add_series(o, lv_color_hex(colorFor(w, MU_TEAL)), LV_CHART_AXIS_PRIMARY_Y);
     s_bind.push_back({o, 7, w});
   } else if (type == "spacer") {
     o = lv_obj_create(parent); lv_obj_remove_style_all(o); lv_obj_set_width(o, LV_PCT(100)); int h = (int)N(w["h"], 0); if (h > 0) lv_obj_set_height(o, h); else { lv_obj_set_height(o, 1); lv_obj_set_flex_grow(o, 1); }
   } else if (type == "divider") {
-    o = lv_obj_create(parent); lv_obj_remove_style_all(o); lv_obj_set_size(o, LV_PCT(100), 1); lv_obj_set_style_bg_color(o, lv_color_hex(CO_MID), 0); lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+    o = lv_obj_create(parent); lv_obj_remove_style_all(o); lv_obj_set_size(o, LV_PCT(100), 1); lv_obj_set_style_bg_color(o, lv_color_hex(MU_LINE), 0); lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
   } else {
-    o = makeLabel(parent, (String("? ") + type).c_str(), &muted);
+    o = makeLabel(parent, (String("? ") + type).c_str(), &caption);
   }
   if (o && !w["hidden"].isNull()) { s_bind.push_back({o, 2, w}); applyHidden(o, w); }
 }
@@ -169,7 +170,7 @@ void refreshBindings() {
       case 2: applyHidden(b.obj, b.w); break;
       case 3: { bool on = getState(R(b.w["bind"])).truthy(); if (on != lv_obj_has_state(b.obj, LV_STATE_CHECKED)) { if (on) lv_obj_add_state(b.obj, LV_STATE_CHECKED); else lv_obj_clear_state(b.obj, LV_STATE_CHECKED); } break; }
       case 4: { int v = (int)getState(R(b.w["bind"])).toNum(); if (v != lv_slider_get_value(b.obj)) lv_slider_set_value(b.obj, v, LV_ANIM_OFF); break; }
-      case 5: { String v = getState(R(b.w["bind"])).toStr(); bool pw = b.w["password"] | false; String shown = v.length() ? (pw ? String("••••••") : v) : R(b.w["placeholder"]); lv_label_set_text(b.obj, shown.c_str()); lv_obj_set_style_text_color(b.obj, lv_color_hex(v.length() ? CO_BONE : CO_MUTE), 0); break; }
+      case 5: { String v = getState(R(b.w["bind"])).toStr(); bool pw = b.w["password"] | false; String shown = v.length() ? (pw ? String("••••••") : v) : R(b.w["placeholder"]); lv_label_set_text(b.obj, shown.c_str()); lv_obj_set_style_text_color(b.obj, lv_color_hex(v.length() ? MU_TEXT : MU_MUTED), 0); break; }
       case 6: { String v = getState(R(b.w["bind"])).toStr(); if (strcmp(lv_label_get_text(b.obj), v.c_str())) { lv_label_set_text(b.obj, v.c_str()); lv_obj_t* box = lv_obj_get_parent(b.obj); lv_obj_update_layout(box); lv_obj_scroll_to_y(box, LV_COORD_MAX, LV_ANIM_OFF); } break; }
       case 7: {   // comma-separated numbers in a state string -> the last `points` values
         String v = getState(R(b.w["bind"])).toStr(); lv_chart_series_t* ser = lv_chart_get_series_next(b.obj, nullptr); if (!ser) break;
@@ -189,14 +190,12 @@ static void evMenu(lv_event_t*) { ui::showApps(); }
 void buildScreen() {
   s_bind.clear(); resetActions();
   lv_obj_t* scr = newScreen();
-  lv_obj_t* bar = statusBar(scr, "APP", runningName().c_str(), true);
-  lv_obj_t* menu = lv_btn_create(bar); lv_obj_remove_style_all(menu); lv_obj_add_style(menu, &btn, 0); lv_obj_add_style(menu, &btnPressed, LV_STATE_PRESSED);
-  lv_obj_set_size(menu, big() ? 50 : 34, chipH() + 6); lv_obj_set_style_pad_all(menu, 0, 0); lv_obj_set_style_radius(menu, LV_RADIUS_CIRCLE, 0);
-  lv_obj_t* ml = lv_label_create(menu); lv_label_set_text(ml, LV_SYMBOL_LIST); lv_obj_center(ml); lv_obj_add_event_cb(menu, evMenu, LV_EVENT_CLICKED, nullptr);
-  lv_obj_set_flex_grow(lv_obj_get_child(bar, -2), 1);   // push the menu button to the right of the title
+  lv_obj_t* bar = statusBar(scr, "", runningName().c_str(), true);
+  lv_obj_t* menu = makeIconButton(bar, LV_SYMBOL_LIST, chipH() + 8, evMenu);
+  (void)menu;
   lv_obj_t* body = lv_obj_create(scr); lv_obj_remove_style_all(body); lv_obj_set_width(body, LV_PCT(100)); lv_obj_set_flex_grow(body, 1);
   lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN); lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_row(body, big() ? 6 : 4, 0); lv_obj_set_style_pad_hor(body, 2, 0);
+  lv_obj_set_style_pad_row(body, big() ? 8 : 6, 0); lv_obj_set_style_pad_hor(body, 2, 0);
   lv_obj_set_scroll_dir(body, LV_DIR_VER); lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
   buildList(body, uiArray(), 0);
   lv_obj_add_event_cb(scr, evScrDeleted, LV_EVENT_DELETE, nullptr);
@@ -243,8 +242,8 @@ static void evOpenApp(lv_event_t* e) {
     s_rmId = s_apps[i].id;
     static const char* btns[] = {"Autostart: off", "Remove", "Cancel", ""}; static const char* btnsOn[] = {"Autostart: on", "Remove", "Cancel", ""};
     lv_obj_t* mb = lv_msgbox_create(nullptr, s_apps[i].name.c_str(), "Autostart opens this applet at power-on (kiosk).", s_apps[i].autostart ? btnsOn : btns, false);
-    lv_obj_set_style_bg_color(mb, lv_color_hex(CO_ABYSS), 0); lv_obj_set_style_text_color(mb, lv_color_hex(CO_BONE), 0); lv_obj_set_style_border_color(mb, lv_color_hex(CO_CAERULEI_D), 0); lv_obj_set_style_radius(mb, 10, 0); lv_obj_set_width(mb, big() ? 360 : 236);
-    lv_obj_t* bm = lv_msgbox_get_btns(mb); lv_obj_set_style_bg_color(bm, lv_color_hex(CO_DEEP), LV_PART_ITEMS); lv_obj_set_style_text_color(bm, lv_color_hex(CO_BONE), LV_PART_ITEMS); lv_obj_set_height(bm, btnH());
+    lv_obj_set_style_bg_color(mb, lv_color_hex(MU_SURFACE), 0); lv_obj_set_style_text_color(mb, lv_color_hex(MU_TEXT), 0); lv_obj_set_style_border_width(mb, 0, 0); lv_obj_set_style_radius(mb, 16, 0); lv_obj_set_width(mb, big() ? 360 : 236); lv_obj_set_style_shadow_width(mb, 30, 0); lv_obj_set_style_shadow_color(mb, lv_color_hex(0x000000), 0); lv_obj_set_style_shadow_opa(mb, LV_OPA_60, 0);
+    lv_obj_t* bm = lv_msgbox_get_btns(mb); lv_obj_set_style_bg_color(bm, lv_color_hex(MU_SURFACE2), LV_PART_ITEMS); lv_obj_set_style_text_color(bm, lv_color_hex(MU_TEXT), LV_PART_ITEMS); lv_obj_set_style_radius(bm, LV_RADIUS_CIRCLE, LV_PART_ITEMS); lv_obj_set_style_border_width(bm, 0, LV_PART_ITEMS); lv_obj_set_height(bm, btnH()); lv_obj_set_style_pad_gap(bm, 6, 0);
     lv_obj_add_event_cb(mb, evAppMenu, LV_EVENT_VALUE_CHANGED, nullptr); lv_obj_center(mb);
     return;
   }
@@ -254,29 +253,33 @@ static void evMacActions(lv_event_t*) { showActions(); }
 static void evResume(lv_event_t*) { applets::buildScreen(); }
 void showApps() {
   s_apps = applets::list();
-  lv_obj_t* scr = newScreen(); statusBar(scr, "07", "APPS", true);
+  lv_obj_t* scr = newScreen(); statusBar(scr, "", "Apps", true);
   lv_obj_t* grid = lv_obj_create(scr); lv_obj_remove_style_all(grid); lv_obj_set_width(grid, LV_PCT(100)); lv_obj_set_flex_grow(grid, 1);
-  lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP); lv_obj_set_style_pad_gap(grid, 4, 0); lv_obj_set_scroll_dir(grid, LV_DIR_VER); lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP); lv_obj_set_style_pad_gap(grid, 6, 0); lv_obj_set_scroll_dir(grid, LV_DIR_VER); lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_AUTO);
   if (applets::running() && !applets::onScreen()) {
-    lv_obj_t* b = makeButton(grid, (String(LV_SYMBOL_PLAY "  Back to ") + applets::runningName()).c_str(), true); lv_obj_set_size(b, LV_PCT(100), btnH() + 4); lv_obj_add_event_cb(b, evResume, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* b = makeButton(grid, (String(LV_SYMBOL_PLAY "  Back to ") + applets::runningName()).c_str(), true); lv_obj_set_size(b, LV_PCT(100), btnH()); lv_obj_add_event_cb(b, evResume, LV_EVENT_CLICKED, nullptr);
   }
   if (s_apps.empty()) {
-    lv_obj_t* l = makeLabel(grid, "No applets yet.\n\nAsk Muse on your Mac:\n\"make the device a people counter\"\n\nIt writes a small JSON applet and installs it here in seconds.", &muted);
-    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP); lv_obj_set_width(l, LV_PCT(100)); lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0); lv_obj_set_style_pad_ver(l, 12, 0);
+    lv_obj_t* wrap = lv_obj_create(grid); lv_obj_remove_style_all(wrap); lv_obj_set_size(wrap, LV_PCT(100), LV_SIZE_CONTENT); lv_obj_set_flex_flow(wrap, LV_FLEX_FLOW_COLUMN); lv_obj_set_flex_align(wrap, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_row(wrap, 6, 0); lv_obj_set_style_pad_ver(wrap, 10, 0);
+    badge(wrap, LV_SYMBOL_PLUS, big() ? 56 : 44);
+    lv_obj_t* l = makeLabel(wrap, "No apps yet", &body);
+    lv_obj_t* h = makeLabel(wrap, "Ask Muse on your Mac: \"make the device a people counter\". It writes a small applet and installs it here in seconds.", &caption);
+    lv_label_set_long_mode(h, LV_LABEL_LONG_WRAP); lv_obj_set_width(h, LV_PCT(96)); lv_obj_set_style_text_align(h, LV_TEXT_ALIGN_CENTER, 0); (void)l;
   }
   for (size_t i = 0; i < s_apps.size(); i++) {
     auto& a = s_apps[i];
-    lv_obj_t* b = lv_btn_create(grid); lv_obj_remove_style_all(b); lv_obj_add_style(b, &btn, 0); lv_obj_add_style(b, &btnPressed, LV_STATE_PRESSED);
-    if (a.id == applets::runningId()) lv_obj_set_style_border_color(b, lv_color_hex(CO_PHOSPHOR), 0);
-    lv_obj_set_size(b, LV_PCT(49), btnH() + (big() ? 30 : 22)); lv_obj_set_style_pad_all(b, 4, 0);
-    lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN); lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_row(b, 2, 0);
+    lv_obj_t* b = lv_btn_create(grid); lv_obj_remove_style_all(b); lv_obj_add_style(b, &card, 0); lv_obj_add_style(b, &pressed, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(b, 14, 0); lv_obj_set_size(b, LV_PCT(49), btnH() + (big() ? 36 : 28)); lv_obj_set_style_pad_all(b, 6, 0);
+    if (a.id == applets::runningId()) lv_obj_set_style_bg_color(b, lv_color_hex(MU_SURFACE2), 0);
+    lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN); lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER); lv_obj_set_style_pad_row(b, 4, 0);
     const char* sym = applets::symbolFor(a.icon);
-    lv_obj_t* ic = lv_label_create(b); lv_label_set_text(ic, sym ? sym : (a.icon.length() ? a.icon.substring(0, 2).c_str() : LV_SYMBOL_FILE)); lv_obj_set_style_text_font(ic, fontIcon(), 0); lv_obj_set_style_text_color(ic, lv_color_hex(CO_CAERULEI), 0);
+    badge(b, sym ? sym : (a.icon.length() ? a.icon.substring(0, 2).c_str() : LV_SYMBOL_FILE), big() ? 40 : 30);
     lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, a.name.c_str()); lv_obj_set_style_text_font(l, fontSmall(), 0); lv_label_set_long_mode(l, LV_LABEL_LONG_DOT); lv_obj_set_width(l, LV_PCT(100)); lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_add_event_cb(b, evOpenApp, LV_EVENT_CLICKED, (void*)(uintptr_t)i); lv_obj_add_event_cb(b, evOpenApp, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)i);
   }
-  lv_obj_t* hint = makeLabel(scr, "hold a tile: autostart / remove", &mono); lv_obj_set_style_text_color(hint, lv_color_hex(CO_MUTE), 0);
-  lv_obj_t* mb = makeButton(scr, "Mac actions  " LV_SYMBOL_RIGHT); lv_obj_set_size(mb, LV_PCT(100), btnH()); lv_obj_add_event_cb(mb, evMacActions, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* foot = lv_obj_create(scr); lv_obj_remove_style_all(foot); lv_obj_set_size(foot, LV_PCT(100), btnH()); lv_obj_set_flex_flow(foot, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(foot, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_t* hint = makeLabel(foot, s_apps.empty() ? "" : "Hold a tile for options", &caption); lv_obj_set_style_text_color(hint, lv_color_hex(MU_DIM), 0);
+  lv_obj_t* mb = makeButton(foot, "Mac actions  " LV_SYMBOL_RIGHT); lv_obj_set_height(mb, btnH() - 4); lv_obj_set_style_pad_ver(mb, 0, 0); lv_obj_add_event_cb(mb, evMacActions, LV_EVENT_CLICKED, nullptr);
   load(scr);
 }
 void showApplet() { if (applets::running()) applets::buildScreen(); else showApps(); }

@@ -13,6 +13,7 @@ namespace ui {
   void showCompose(int target);       // 0 = AI, 1 = Mac keyboard
   void showSettings();
   void showCalibrate(bool fromWizard);
+  void showTouchTest();
   void showSetupWizard();
   void showPairing();
   void showInbox();
@@ -37,5 +38,7 @@ namespace ui_int {
   lv_obj_t* addSlider(lv_obj_t* parent, const char* label, int min, int max, int val, lv_event_cb_t cb, void* ud);
   lv_obj_t* addAction(lv_obj_t* parent, const char* label, const char* value, lv_event_cb_t cb, void* ud);
   lv_obj_t* sectionLabel(lv_obj_t* parent, const char* text);
+  lv_obj_t* sectionCard(lv_obj_t* parent, const char* title);   // card with a title; rows go inside it
+  lv_obj_t* scrollList(lv_obj_t* scr);                           // vertical scrolling column filling the screen
   void confirm(const char* title, const char* text, void (*onYes)());
 }

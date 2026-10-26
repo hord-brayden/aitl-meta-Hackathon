@@ -12,6 +12,7 @@
 #include <mbedtls/base64.h>
 #include <sys/time.h>
 #include "../applets/applet.h"
+#include "../ui/ui.h"
 
 namespace app {
 std::vector<Model> models; std::vector<Chat> chats; std::vector<Action> actions; std::vector<CcSession> ccSessions; Alert alert; std::vector<Alert> inbox; uint8_t inboxUnread = 0; NowPlaying np;
@@ -313,6 +314,14 @@ static void onMessage(JsonDocument& d, bridge::Transport from) {
     ledSetMode(alert.twoWay ? LedMode::Alert : LedMode::Done); if (!displayIsAwake()) displayWake(); emit(Ev::Alert); emit(Ev::Inbox);
   } else if (!strcmp(t, "alert.clear")) {
     if (alert.id == String((const char*)(d["id"] | ""))) { alert = Alert(); if (!streaming) ledSetMode(LedMode::Idle); emit(Ev::AlertClear); }
+  } else if (!strcmp(t, "ui.show")) {   // host-driven navigation (screenshots, demos)
+    const char* sc = d["screen"] | "home"; bool ok = true;
+    if (!strcmp(sc, "home")) ui::showHome(); else if (!strcmp(sc, "boot")) ui::showBoot(); else if (!strcmp(sc, "apps")) ui::showApps(); else if (!strcmp(sc, "applet")) ui::showApplet();
+    else if (!strcmp(sc, "settings")) ui::showSettings(); else if (!strcmp(sc, "models")) ui::showModels(); else if (!strcmp(sc, "chats")) ui::showChats();
+    else if (!strcmp(sc, "actions")) ui::showActions(); else if (!strcmp(sc, "compose")) ui::showCompose(0); else if (!strcmp(sc, "inbox")) ui::showInbox();
+    else if (!strcmp(sc, "wizard")) ui::showSetupWizard(); else if (!strcmp(sc, "calibrate")) ui::showCalibrate(false); else if (!strcmp(sc, "touchtest")) ui::showTouchTest();
+    else ok = false;
+    DynamicJsonDocument r(96); r["t"] = "ui.ack"; r["ok"] = ok; r["screen"] = sc; bridge::sendVia(from, r);
   } else if (!strcmp(t, "screen.get")) {   // stream the framebuffer as RGB565 rows (base64), read back from the panel
     int step = constrain((int)(d["scale"] | 1), 1, 4); int W = displayW(), H = displayH(); int w = (W + step - 1) / step;
     static uint16_t px[480]; unsigned char b64[1400];

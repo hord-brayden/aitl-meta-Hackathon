@@ -59,3 +59,8 @@ bridge; `applet.ack` / `applet.list` / `applet.state` / `applet.ui` / `applet.lo
 big-endian RGB565, one row each, `w` pixels) followed by `screen.done {w, h, fmt:"rgb565be"}` (or `err`). A full
 320×240 frame takes ≈ 5 s over USB; `scale: 2` takes ≈ 1.5 s. The bridge assembles a PNG for `musecorder screenshot`
 and the MCP `device_screenshot` tool. Needs a readable panel (`AITL_PANEL_READABLE`, ILI9341 boards).
+
+## Host-driven navigation
+`ui.show {screen}` (bridge → device) switches the screen: `home`, `apps`, `applet` (the running applet), `settings`, `models`,
+`chats`, `actions`, `compose`, `inbox`, `wizard`, `calibrate`, `touchtest`, `boot`. Reply `ui.ack {ok, screen}`. Used with
+`screen.get` for screenshots and demos.
