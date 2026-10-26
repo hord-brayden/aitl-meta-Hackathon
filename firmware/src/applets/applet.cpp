@@ -334,6 +334,15 @@ bool remove(const String& id) {
   return ok;
 }
 
+bool setAutostart(const String& id, bool on) {
+  if (!validId(id) || !LittleFS.exists(path(id))) return false;
+  File f = LittleFS.open(path(id), "r"); if (!f) return false; JsonDocument d; bool ok = deserializeJson(d, f) == DeserializationError::Ok; f.close(); if (!ok) return false;
+  if (on) { for (auto& i : list()) if (i.autostart && i.id != id) setAutostart(i.id, false); }   // one kiosk applet at a time
+  d["autostart"] = on;
+  File w = LittleFS.open(path(id), "w"); if (!w) return false; serializeJson(d, w); w.close();
+  return on;
+}
+
 // ---------------- link ----------------
 static void ack(const String& id, bool ok, const String& err, bridge::Transport from, size_t size = 0) {
   JsonDocument r; r["t"] = "applet.ack"; r["id"] = id; r["ok"] = ok; if (err.length()) r["err"] = err; if (size) r["size"] = size; r["heap"] = ESP.getFreeHeap(); bridge::sendVia(from, r);

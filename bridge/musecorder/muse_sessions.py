@@ -18,8 +18,8 @@ log = logging.getLogger("musecorder.musesessions")
 SESSIONS_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "muse" / "sessions"
 MAX_SNIFF = 256 * 1024
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-_PROMPT_RE = re.compile(r'\\"prompt\\":\\"((?:[^"\\]|\\\\.){1,80})')
-_ROOT_RE = re.compile(r'\\"workspace_?[rR]oot\\":\\"((?:[^"\\]|\\\\.){1,300})')
+_PROMPT_RE = re.compile(r'\\"prompt\\":\s*\\"((?:[^"\\]|\\\\.){1,80})')
+_ROOT_RE = re.compile(r'\\"workspace_?[rR]oot\\":\s*\\"((?:[^"\\]|\\\\.){1,300})')
 
 
 @dataclass
@@ -47,8 +47,14 @@ def _unescape(s: str) -> str:
 def _parse_rfc3339(s: str | None) -> float:
     if not s:
         return 0.0
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:?\d{2})?$", s.strip())
+    if not m:
+        return 0.0
+    frac = (m.group(3) or "0")[:6].ljust(6, "0")
+    tz = m.group(4) or "Z"
+    tz = "+00:00" if tz == "Z" else (tz if ":" in tz else tz[:3] + ":" + tz[3:])
     try:
-        return dt.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+        return dt.datetime.fromisoformat(f"{m.group(1)}T{m.group(2)}.{frac}{tz}").timestamp()
     except ValueError:
         return 0.0
 

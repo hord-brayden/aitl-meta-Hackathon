@@ -18,6 +18,7 @@ bool onMessage(JsonDocument& d, bridge::Transport from);   // applet.* / net.htt
 std::vector<Info> list();
 bool install(const String& json, bool open, String& err, String* idOut = nullptr);
 bool remove(const String& id);
+bool setAutostart(const String& id, bool on);   // rewrites the stored document; returns the new value
 bool open(const String& id, String& err);       // loads, shows the screen, runs `start`
 void requestClose();                            // leave the running applet (deferred to tick)
 bool running();

@@ -214,9 +214,23 @@ String uiText() {
 namespace ui {
 static std::vector<applets::Info> s_apps; static String s_rmId;
 static void doRemove() { applets::remove(s_rmId); toast("Applet removed"); showApps(); }
+static void evAppMenu(lv_event_t* e) {
+  lv_obj_t* mb = lv_event_get_current_target(e); const char* b = lv_msgbox_get_active_btn_text(mb); String choice = b ? b : "";
+  lv_msgbox_close_async(mb);
+  if (choice.startsWith("Autostart")) { bool on = applets::setAutostart(s_rmId, !choice.endsWith("on")); toast(on ? "Opens on boot. Hold BOOT 3 s to leave it." : "Autostart off"); showApps(); }
+  else if (choice == "Remove") doRemove();
+}
 static void evOpenApp(lv_event_t* e) {
   size_t i = (size_t)(uintptr_t)lv_event_get_user_data(e); if (i >= s_apps.size()) return;
-  if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) { s_rmId = s_apps[i].id; confirm("Remove applet?", (s_apps[i].name + " is deleted from flash.").c_str(), doRemove); return; }
+  if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) {
+    s_rmId = s_apps[i].id;
+    static const char* btns[] = {"Autostart: off", "Remove", "Cancel", ""}; static const char* btnsOn[] = {"Autostart: on", "Remove", "Cancel", ""};
+    lv_obj_t* mb = lv_msgbox_create(nullptr, s_apps[i].name.c_str(), "Autostart opens this applet at power-on (kiosk).", s_apps[i].autostart ? btnsOn : btns, false);
+    lv_obj_set_style_bg_color(mb, lv_color_hex(CO_ABYSS), 0); lv_obj_set_style_text_color(mb, lv_color_hex(CO_BONE), 0); lv_obj_set_style_border_color(mb, lv_color_hex(CO_CAERULEI_D), 0); lv_obj_set_style_radius(mb, 10, 0); lv_obj_set_width(mb, big() ? 360 : 236);
+    lv_obj_t* bm = lv_msgbox_get_btns(mb); lv_obj_set_style_bg_color(bm, lv_color_hex(CO_DEEP), LV_PART_ITEMS); lv_obj_set_style_text_color(bm, lv_color_hex(CO_BONE), LV_PART_ITEMS); lv_obj_set_height(bm, btnH());
+    lv_obj_add_event_cb(mb, evAppMenu, LV_EVENT_VALUE_CHANGED, nullptr); lv_obj_center(mb);
+    return;
+  }
   String err; if (!applets::open(s_apps[i].id, err)) toast(err.c_str(), true);
 }
 static void evMacActions(lv_event_t*) { showActions(); }
@@ -244,7 +258,7 @@ void showApps() {
     lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, a.name.c_str()); lv_obj_set_style_text_font(l, fontSmall(), 0); lv_label_set_long_mode(l, LV_LABEL_LONG_DOT); lv_obj_set_width(l, LV_PCT(100)); lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_add_event_cb(b, evOpenApp, LV_EVENT_CLICKED, (void*)(uintptr_t)i); lv_obj_add_event_cb(b, evOpenApp, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)i);
   }
-  lv_obj_t* hint = makeLabel(scr, "hold a tile to remove", &mono); lv_obj_set_style_text_color(hint, lv_color_hex(CO_MUTE), 0);
+  lv_obj_t* hint = makeLabel(scr, "hold a tile: autostart / remove", &mono); lv_obj_set_style_text_color(hint, lv_color_hex(CO_MUTE), 0);
   lv_obj_t* mb = makeButton(scr, "Mac actions  " LV_SYMBOL_RIGHT); lv_obj_set_size(mb, LV_PCT(100), btnH()); lv_obj_add_event_cb(mb, evMacActions, LV_EVENT_CLICKED, nullptr);
   load(scr);
 }

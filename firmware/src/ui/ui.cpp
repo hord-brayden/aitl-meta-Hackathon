@@ -411,6 +411,13 @@ void showHome() {
   s_npPlay = miniBtn(s_np, LV_SYMBOL_PLAY, evNpPlay, CO_BONE);
   miniBtn(s_np, LV_SYMBOL_NEXT, evNpNext, CO_ASH);
   lv_obj_add_flag(s_np, LV_OBJ_FLAG_HIDDEN);
+  // background applet strip (only when one is running off screen)
+  if (applets::running() && !applets::onScreen()) {
+    lv_obj_t* st = makeButton(s_home, (String(LV_SYMBOL_PLAY "  ") + applets::runningName() + " is running  " LV_SYMBOL_RIGHT).c_str());
+    lv_obj_set_size(st, LV_PCT(100), chipH() + (big() ? 14 : 10)); lv_obj_set_style_pad_ver(st, 2, 0); lv_obj_set_style_border_color(st, lv_color_hex(CO_PHOSPHOR), 0);
+    lv_obj_set_style_text_font(lv_obj_get_child(st, 0), fontSmall(), 0);
+    lv_obj_add_event_cb(st, [](lv_event_t*) { applets::buildScreen(); }, LV_EVENT_CLICKED, nullptr);
+  }
   // dock
   lv_obj_t* dock = lv_obj_create(s_home); lv_obj_remove_style_all(dock); lv_obj_set_size(dock, LV_PCT(100), dockH());
   lv_obj_set_flex_flow(dock, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(dock, big() ? 6 : 4, 0);
