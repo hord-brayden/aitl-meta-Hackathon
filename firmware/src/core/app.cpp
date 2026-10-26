@@ -313,6 +313,18 @@ static void onMessage(JsonDocument& d, bridge::Transport from) {
     ledSetMode(alert.twoWay ? LedMode::Alert : LedMode::Done); if (!displayIsAwake()) displayWake(); emit(Ev::Alert); emit(Ev::Inbox);
   } else if (!strcmp(t, "alert.clear")) {
     if (alert.id == String((const char*)(d["id"] | ""))) { alert = Alert(); if (!streaming) ledSetMode(LedMode::Idle); emit(Ev::AlertClear); }
+  } else if (!strcmp(t, "screen.get")) {   // stream the framebuffer as RGB565 rows (base64), read back from the panel
+    int step = constrain((int)(d["scale"] | 1), 1, 4); int W = displayW(), H = displayH(); int w = (W + step - 1) / step;
+    static uint16_t px[480]; unsigned char b64[1400];
+    lv_timer_handler();   // flush pending draws first
+    for (int y = 0; y < H; y += step) {
+      if (!displayReadRow(y, px, w, step)) { DynamicJsonDocument r(96); r["t"] = "screen.done"; r["err"] = "panel not readable"; bridge::sendVia(from, r); return; }
+      // LovyanGFX hands uint16_t rows back byte-swapped already (swap565): the wire is big-endian RGB565 as-is
+      size_t olen = 0; mbedtls_base64_encode(b64, sizeof(b64), &olen, (const uint8_t*)px, w * 2);
+      DynamicJsonDocument r(1600); r["t"] = "screen.row"; r["y"] = y / step; r["d"] = (const char*)b64; bridge::sendVia(from, r);
+      if (from != bridge::Transport::Serial) delay(4);
+    }
+    DynamicJsonDocument r(128); r["t"] = "screen.done"; r["w"] = w; r["h"] = (H + step - 1) / step; r["fmt"] = "rgb565be"; bridge::sendVia(from, r);
   } else if (!strcmp(t, "pong")) { /* alive */
   } else if (!strcmp(t, "reboot")) { delay(100); ESP.restart();
   } else if (!strcmp(t, "ping")) { DynamicJsonDocument r(64); r["t"] = "pong"; bridge::sendVia(from, r); }

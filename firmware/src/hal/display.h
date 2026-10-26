@@ -13,5 +13,6 @@ bool displayIsAwake();
 TouchRaw displayReadTouchRaw();  // last sample, uncalibrated (used by the calibration wizard)
 void displaySetCalibrating(bool on);  // when on, LVGL still gets mapped points but with identity flags
 lv_coord_t displayW();
+bool displayReadRow(int y, uint16_t* out, int w, int step);   // RGB565 pixels of screen row y (every `step`-th pixel); panel GRAM read
 lv_coord_t displayH();
 void displayPerfReport(uint32_t handlerUs, uint32_t handlerMaxUs, uint32_t loops);

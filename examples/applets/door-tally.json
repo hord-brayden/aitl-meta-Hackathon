@@ -1,0 +1,32 @@
+{
+  "id": "door-tally",
+  "name": "Door Tally",
+  "icon": "plus",
+  "version": 1,
+  "background": true,
+  "state": { "count": 0, "door": "A", "sheet": "https://example.invalid/webhook", "status": "idle", "posted": 0 },
+  "persist": [ "count", "door", "sheet" ],
+  "ui": [
+    { "type": "label", "text": "DOOR ${door}", "style": "mono" },
+    { "type": "label", "text": "${count}", "size": "xxl", "align": "center" },
+    { "type": "row", "items": [
+      { "type": "button", "text": "-1", "do": [ { "if": "${count > 0}", "then": [ { "dec": "count" } ] } ] },
+      { "type": "button", "text": "+1", "style": "primary", "grow": 2, "do": [ { "inc": "count" }, { "led": "green" } ] }
+    ]},
+    { "type": "row", "items": [
+      { "type": "button", "text": "Post now", "grow": 2, "do": [ { "event": "post" } ] },
+      { "type": "button", "text": "Reset", "style": "danger", "hold": [ { "set": { "count": 0 } }, { "toast": "Tally reset" } ], "do": [ { "toast": "Hold to reset" } ] }
+    ]},
+    { "type": "label", "text": "${status}", "style": "muted", "align": "center" }
+  ],
+  "on": {
+    "start": [ { "set": { "status": "ready" } } ],
+    "every:300": [ { "if": "${count != posted}", "then": [ { "event": "post" } ] } ],
+    "post": [
+      { "set": { "status": "posting..." } },
+      { "http": { "method": "POST", "url": "${sheet}", "json": { "door": "${door}", "count": "${count}", "device": "${device.id}" }, "timeout": 10,
+                  "then": [ { "set": { "status": "posted ${count} at ${time}", "posted": "${count}" } }, { "led": "idle" } ],
+                  "else": [ { "set": { "status": "post failed: ${err}" } }, { "led": "red" } ] } }
+    ]
+  }
+}

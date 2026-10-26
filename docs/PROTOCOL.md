@@ -45,7 +45,7 @@ Device log lines start with `# ` and are ignored by the bridge. Frames are ≤ 6
 | `settings.set` | key, value (from `aitl set`) |
 | `reboot` / `ping` / `pong` | |
 
-Adding a message: handle it in `firmware/src/core/app.cpp::onMessage` and `bridge/aitl_bridge/session.py::handle`.
+Adding a message: handle it in `firmware/src/core/app.cpp::onMessage` and `bridge/musecorder/session.py::handle`.
 
 ## Applets (device ⇄ bridge)
 See `APPLETS.md` §6 for the full table: `applet.put` / `applet.install` / `applet.list` / `applet.remove` / `applet.open` /
@@ -53,3 +53,9 @@ See `APPLETS.md` §6 for the full table: `applet.put` / `applet.install` / `appl
 bridge; `applet.ack` / `applet.list` / `applet.state` / `applet.ui` / `applet.log.list` / `applet.log` /
 `applet.event.out` from the device. Applets also originate `net.http` (answered by `net.http.reply`), `ai.ask`
 (`ai.reply`) and `notify`. Handlers live in `firmware/src/applets/applet.cpp::onMessage`.
+
+## Screen capture
+`screen.get {scale}` (bridge → device, scale 1–4) streams the panel's GRAM back as `screen.row {y, d}` frames (base64,
+big-endian RGB565, one row each, `w` pixels) followed by `screen.done {w, h, fmt:"rgb565be"}` (or `err`). A full
+320×240 frame takes ≈ 5 s over USB; `scale: 2` takes ≈ 1.5 s. The bridge assembles a PNG for `musecorder screenshot`
+and the MCP `device_screenshot` tool. Needs a readable panel (`AITL_PANEL_READABLE`, ILI9341 boards).

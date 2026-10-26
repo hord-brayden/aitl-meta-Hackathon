@@ -153,7 +153,7 @@ def _launch_env() -> dict[str, str]:
         "PYTHONPATH": str(venv / "lib" / ver / "site-packages"),
         "HOME": str(Path.home()), "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
     }
-    for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "MUSE_API_KEY", "MUSECORDER_HOME"):
+    for k in ("META_API_KEY", "MODEL_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "MUSECORDER_HOME", "XDG_CONFIG_HOME"):
         if os.environ.get(k):
             env[k] = os.environ[k]
     return env

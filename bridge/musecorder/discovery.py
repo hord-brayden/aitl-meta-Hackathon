@@ -16,7 +16,7 @@ class Advertiser:
         """Registers in a background thread: zeroconf's sync API must not run inside the asyncio loop, and
         discovery is a convenience, so any failure is logged and ignored."""
         import threading
-        threading.Thread(target=self._register, name="aitl-mdns", daemon=True).start()
+        threading.Thread(target=self._register, name="musecorder-mdns", daemon=True).start()
         return True
 
     def _register(self) -> None:

@@ -1,0 +1,23 @@
+{
+  "id": "dice",
+  "name": "Dice",
+  "icon": "ok",
+  "version": 1,
+  "state": { "face": 1, "rolls": 0 },
+  "ui": [
+    { "type": "spacer" },
+    { "type": "label", "text": "${face}", "size": "xxl", "align": "center" },
+    { "type": "label", "text": "roll ${rolls}", "style": "muted", "align": "center" },
+    { "type": "spacer" },
+    { "type": "button", "text": "Roll", "style": "primary", "h": 64, "do": [ { "event": "roll" } ] }
+  ],
+  "on": {
+    "roll": [
+      { "set": { "face": "${random(1, 6)}" } },
+      { "inc": "rolls" },
+      { "beep": { "freq": 660, "ms": 40 } },
+      { "led": "${face == 6 ? 'green' : 'blue'}" }
+    ],
+    "boot:press": [ { "event": "roll" } ]
+  }
+}

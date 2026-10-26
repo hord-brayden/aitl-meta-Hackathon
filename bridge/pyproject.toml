@@ -3,14 +3,13 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aitl-bridge"
-version = "0.1.0"
-description = "AITL bridge: links the Caeruli Obscuri AITL hardware companion to AI providers and to your Mac"
+name = "musecorder"
+version = "0.2.0"
+description = "Musecorder bridge: links the Musecorder ESP32 device to Meta Muse, Muse Code and your Mac, and relays applets"
 requires-python = ">=3.10"
 dependencies = [
-  "claude-agent-sdk>=0.2.100",
-  "anthropic>=0.60",
-  "google-genai>=1.0",
+  "muse-code-sdk>=1.4.13",
+  "mcp>=1.10,<2",
   "openai>=1.50",
   "httpx>=0.27",
   "pyserial>=3.5",
@@ -27,10 +26,11 @@ stt = ["mlx-whisper>=0.4"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 
 [project.scripts]
-aitl = "aitl_bridge.cli:main"
+musecorder = "musecorder.cli:main"
+musecorder-mcp = "musecorder.mcp_server:main"
 
 [tool.setuptools.packages.find]
-include = ["aitl_bridge*"]
+include = ["musecorder*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

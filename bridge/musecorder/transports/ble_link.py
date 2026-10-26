@@ -1,4 +1,4 @@
-"""BLE transport (Nordic UART Service) using bleak: scans for the AITL device, subscribes to TX, writes RX.
+"""BLE transport (Nordic UART Service) using bleak: scans for the Musecorder device (advertised as "AITL"), subscribes to TX, writes RX.
 Same NDJSON frames as serial. Enable with `musecorder serve --ble` (and Setup > Bluetooth link on the device)."""
 from __future__ import annotations
 import asyncio

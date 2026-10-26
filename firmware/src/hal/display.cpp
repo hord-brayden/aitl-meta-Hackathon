@@ -67,7 +67,7 @@ class LGFX : public lgfx::LGFX_Device {
   LGFX() {
     { auto c = _bus.config();
       c.spi_host = HSPI_HOST; c.spi_mode = 0;
-      c.freq_write = TFT_SPI_HZ; c.freq_read = 16000000;
+      c.freq_write = TFT_SPI_HZ; c.freq_read = 6000000;   // GRAM read-back (screenshots) is unreliable above ~8 MHz on CYD wiring
       c.spi_3wire = false; c.use_lock = true; c.dma_channel = SPI_DMA_CH_AUTO;
       c.pin_sclk = PIN_TFT_SCLK; c.pin_mosi = PIN_TFT_MOSI; c.pin_miso = PIN_TFT_MISO; c.pin_dc = PIN_TFT_DC;
       _bus.config(c); _panel.setBus(&_bus); }
@@ -123,6 +123,14 @@ enum class Power { On, Dim, Off };
 static Power s_power = Power::On;
 static bool s_swallow = false;
 
+bool displayReadRow(int y, uint16_t* out, int w, int step) {
+  if (!AITL_PANEL_READABLE || y < 0 || y >= tft.height()) return false;
+  static uint16_t row[480];
+  int full = tft.width(); if (full > 480) full = 480;
+  tft.readRect(0, y, full, 1, row);
+  for (int i = 0, x = 0; i < w && x < full; i++, x += step) out[i] = row[x];
+  return true;
+}
 lv_coord_t displayW() { return (g_settings.rotation & 1) ? TFT_NATIVE_H : TFT_NATIVE_W; }
 lv_coord_t displayH() { return (g_settings.rotation & 1) ? TFT_NATIVE_W : TFT_NATIVE_H; }
 

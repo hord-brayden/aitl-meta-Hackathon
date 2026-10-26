@@ -212,7 +212,7 @@ static void wizRender() {
   char hdr[16]; snprintf(hdr, sizeof(hdr), "SETUP %d/3", s_wiz == 0 ? 1 : s_wiz);
   lv_obj_t* h = makeLabel(s_wizScr, hdr, &mono); lv_obj_set_style_pad_top(h, 6, 0);
   if (s_wiz == 0) {
-    lv_obj_t* t = makeLabel(s_wizScr, "Welcome to AITL", &title);
+    lv_obj_t* t = makeLabel(s_wizScr, "Welcome to Musecorder", &title);
     (void)t;
     lv_obj_t* b = makeLabel(s_wizScr, "Your AI companion. Keys stay on your Mac; this device only ever holds a pairing token.\n\nFirst we calibrate touch, then orientation and colors.", &body);
     lv_obj_set_width(b, LV_PCT(92)); lv_label_set_long_mode(b, LV_LABEL_LONG_WRAP); lv_obj_set_style_text_align(b, LV_TEXT_ALIGN_CENTER, 0); lv_obj_set_style_text_font(b, &lv_font_montserrat_12, 0);

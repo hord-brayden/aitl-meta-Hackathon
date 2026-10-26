@@ -1,0 +1,22 @@
+{
+  "id": "pin-watch",
+  "name": "Pin Watch",
+  "icon": "charge",
+  "version": 1,
+  "background": true,
+  "state": { "pin": 22, "edges": 0, "window": 0, "rate": 0, "out": false, "status": "watching GPIO 22" },
+  "persist": [ "edges" ],
+  "ui": [
+    { "type": "label", "text": "${status}", "style": "mono" },
+    { "type": "label", "text": "${edges}", "size": "xxl", "align": "center" },
+    { "type": "label", "text": "${fmt(rate, 1)} / s", "size": "l", "align": "center", "style": "accent" },
+    { "type": "toggle", "text": "GPIO 26 output", "bind": "out", "on_change": [ { "gpio.write": { "pin": 26, "value": "${out ? 1 : 0}" } } ] },
+    { "type": "button", "text": "Zero", "style": "ghost", "do": [ { "set": { "edges": 0, "window": 0, "rate": 0 } } ] }
+  ],
+  "on": {
+    "start": [ { "gpio.mode": { "pin": 26, "mode": "out" } }, { "gpio.write": { "pin": 26, "value": "${out ? 1 : 0}" } } ],
+    "gpio:22:fall": [ { "inc": "edges" }, { "inc": "window" } ],
+    "every:5": [ { "set": { "rate": "${window / 5}", "window": 0 } } ],
+    "stop": [ { "save": true } ]
+  }
+}

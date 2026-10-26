@@ -19,7 +19,7 @@ class Chat:
     updated: float = field(default_factory=time.time)
     model: str = ""
     messages: list[dict[str, Any]] = field(default_factory=list)   # {"role": "user"|"assistant", "content": str}
-    ext: dict[str, Any] = field(default_factory=dict)              # provider state, e.g. {"claude_code_session": id}
+    ext: dict[str, Any] = field(default_factory=dict)              # provider state, e.g. {"muse_session": id}
 
     def transcript(self, limit: int = 3000) -> str:
         out = []
