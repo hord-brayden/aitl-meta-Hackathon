@@ -113,7 +113,7 @@ One verb per object. Any string value is a template.
 | `{"gpio.write": {"pin": 22, "value": "${armed ? 1 : 0}"}}` | drive a pin |
 | `{"gpio.read": {"pin": 22, "into": "btn"}}` | read a pin into state (0/1) |
 | `{"adc.read": {"pin": 34, "into": "raw"}}` | read an ADC pin (0–4095) into state |
-| `{"i2c.scan": {"into": "found"}}` | scan the user I²C bus on the P3 header (SDA 21, SCL 22, 100 kHz); `found` gets `"0x44,0x3c"` |
+| `{"i2c.scan": {"into": "found"}}` | scan the user I²C bus (SDA IO22 on the P3 header, SCL IO26, 100 kHz; IO21 is the touch INT line); `found` gets `"0x44,0x3c"` |
 | `{"i2c.read": {"addr": 68, "reg": 0, "len": 2, "into": "t"}}` | read `len` (≤ 32) bytes, optionally after writing a register byte; `t` gets the first ≤ 4 bytes as a big-endian number, `t_hex` the whole payload as hex |
 | `{"i2c.write": {"addr": 68, "reg": 36, "bytes": [1, 2]}}` | write a register byte (optional) followed by `bytes` |
 | `{"http": {"method": "GET\|POST\|PUT", "url": "...", "headers": {}, "json": {} \| "body": "...", "timeout": 10, "via": "auto\|bridge\|direct", "into": "resp", "then": [], "else": []}}` | HTTP request. `via: auto` (default) uses the bridge when it is linked, otherwise the device's own Wi-Fi. On completion `resp.status`, `resp.body` (≤ 2 KB, text) and, for a JSON body, `resp.json.<field>` are readable in templates; `err` holds the failure text in `else` |

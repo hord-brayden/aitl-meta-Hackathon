@@ -212,8 +212,8 @@ static void runOne(JsonObject a) {
     else if (verb == "gpio.write") { int pin = (int)typed(v["pin"]).toNum(); if (!pinAllowed(pin, true)) { logLine("gpio: pin " + String(pin) + " not allowed"); continue; } pinMode(pin, OUTPUT); digitalWrite(pin, typed(v["value"]).truthy() ? HIGH : LOW); }
     else if (verb == "gpio.read") { int pin = (int)typed(v["pin"]).toNum(); if (!pinAllowed(pin, false)) continue; setState(rendered(v["into"]), expr::Value::num(digitalRead(pin))); }
     else if (verb == "adc.read") { int pin = (int)typed(v["pin"]).toNum(); if (!pinAllowed(pin, false)) continue; setState(rendered(v["into"]), expr::Value::num(analogRead(pin))); }
-    else if (verb == "i2c.scan" || verb == "i2c.read" || verb == "i2c.write") {   // user bus on the P3 header: SDA 21, SCL 22
-      static bool wireUp = false; if (!wireUp) { wireUp = Wire1.begin(21, 22, 100000); }
+    else if (verb == "i2c.scan" || verb == "i2c.read" || verb == "i2c.write") {   // user bus: SDA IO22 (P3), SCL IO26 (speaker pin; IO21 is the touch INT line)
+      static bool wireUp = false; if (!wireUp) { wireUp = Wire1.begin(22, 26, 100000); }
       if (!wireUp) { logLine("i2c: bus init failed"); continue; }
       if (verb == "i2c.scan") { String found; for (int a = 8; a < 120; a++) { Wire1.beginTransmission(a); if (Wire1.endTransmission() == 0) { if (found.length()) found += ","; found += "0x" + String(a, HEX); } } setState(rendered(v["into"]).length() ? rendered(v["into"]) : String("i2c"), expr::Value::str(found)); }
       else {

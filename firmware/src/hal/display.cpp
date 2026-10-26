@@ -100,7 +100,11 @@ class LGFX : public lgfx::LGFX_Device {
       c.pin_int = -1; c.pin_rst = PIN_TOUCH_RST; c.bus_shared = false; c.offset_rotation = 0;
       c.i2c_port = 0; c.i2c_addr = TOUCH_I2C_ADDR; c.pin_sda = PIN_TOUCH_SDA; c.pin_scl = PIN_TOUCH_SCL; c.freq = 400000;
 #endif
-      _touch.config(c); _panel.setTouch(&_touch); }
+      _touch.config(c);
+#if !defined(AITL_TOUCH_CST8XX)
+      _panel.setTouch(&_touch);     // CST8xx boards use the filtered raw driver below instead (ghost-touch gating)
+#endif
+    }
     setPanel(&_panel);
   }
   void applyPanelFlags(bool invert, bool bgr) {
@@ -172,12 +176,85 @@ static void mapTouch(uint16_t rx, uint16_t ry, lv_coord_t& ux, lv_coord_t& uy) {
   ux = constrain(x, 0, W - 1); uy = constrain(y, 0, H - 1);
 }
 
+#if defined(AITL_TOUCH_CST8XX)
+// ---------------- CST816/CST820 raw driver with ghost-touch filtering ----------------
+// The CYD's CST820 emits garbage frames (RF noise from the radios, dirty USB power) and sometimes keeps reporting the
+// same frozen coordinate after the finger lifts. LovyanGFX's driver passes all of that through, which shows up as
+// taps nobody made. This driver (ported from TouchBoard, verified on this panel) gates reports on the chip's INT
+// pulse, drops impossible frames, requires consecutive agreeing samples, and force-releases a latched coordinate.
+#include <Wire.h>
+static const uint8_t CST_ADDR = TOUCH_I2C_ADDR;
+static const uint32_t TOUCH_INT_GATE_MS = 150, TOUCH_STUCK_MS = 1500;
+static const uint8_t PRESS_FRAMES = 2, RELEASE_FRAMES = 2; static const int JITTER_PX = 40;
+static volatile uint32_t s_lastIntMs = 0, s_intCount = 0;
+static void IRAM_ATTR touchIsr() { s_lastIntMs = millis(); s_intCount++; }
+static bool cstRead(uint8_t reg, uint8_t* buf, size_t n) {
+  Wire.beginTransmission(CST_ADDR); Wire.write(reg); if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((int)CST_ADDR, (int)n) != (int)n) return false;
+  for (size_t i = 0; i < n; i++) buf[i] = Wire.read(); return true;
+}
+static void cstWrite(uint8_t reg, uint8_t v) { Wire.beginTransmission(CST_ADDR); Wire.write(reg); Wire.write(v); Wire.endTransmission(); }
+static void cstBegin() {
+  pinMode(PIN_TOUCH_RST, OUTPUT); digitalWrite(PIN_TOUCH_RST, LOW); delay(20); digitalWrite(PIN_TOUCH_RST, HIGH); delay(150);
+  Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL, 400000);
+  cstWrite(0xFE, 0xFF);   // DisAutoSleep: the chip otherwise powers down after a few idle seconds and stops answering
+  cstWrite(0xFA, 0x60);   // IrqCtl: pulse INT while touched and on change
+  pinMode(PIN_TOUCH_INT, INPUT); attachInterrupt(digitalPinToInterrupt(PIN_TOUCH_INT), touchIsr, FALLING);
+  uint8_t id = 0; bool ok = cstRead(0xA7, &id, 1) && id != 0;
+  Serial.printf("# touch: CST8xx %s (id 0x%02X), INT gate on IO%d\n", ok ? "found" : "NOT FOUND", id, PIN_TOUCH_INT);
+}
+// 1 finger down (rx, ry native portrait), 0 none, -1 garbage
+static int cstRaw(int& rx, int& ry) {
+  uint8_t d[6]; if (!cstRead(0x01, d, 6)) return -1;
+  if (d[1] == 0) return 0; if (d[1] > 2) return -1;
+  rx = ((d[2] & 0x0F) << 8) | d[3]; ry = ((d[4] & 0x0F) << 8) | d[5];
+  if (rx > TFT_NATIVE_W - 1 || ry > TFT_NATIVE_H - 1) return -1;
+  return 1;
+}
+// Filtered read in native portrait coordinates. Returns true while a stable finger is down.
+static bool cstFiltered(uint16_t& ox, uint16_t& oy) {
+  static bool stableDown = false, gateArmed = false, stuck = false; static uint8_t downN = 0, upN = 0;
+  static int lastX = 0, lastY = 0, prevRX = -1, prevRY = -1; static uint32_t sameSince = 0;
+  int rx = 0, ry = 0; int st = cstRaw(rx, ry);
+  if (!gateArmed && s_intCount > 0) { gateArmed = true; Serial.println("# touch: INT line alive, stale-report gating armed"); }
+  if (gateArmed && st == 1 && millis() - s_lastIntMs > TOUCH_INT_GATE_MS) st = 0;   // report without a recent pulse = stale
+  if (st == 1) {
+    if (rx == prevRX && ry == prevRY) { if (!sameSince) sameSince = millis(); if (millis() - sameSince > TOUCH_STUCK_MS) stuck = true; }
+    else { prevRX = rx; prevRY = ry; sameSince = 0; stuck = false; }
+    if (stuck) st = 0;                                                             // latched coordinate, not a finger
+  } else if (st == 0) { sameSince = 0; stuck = false; prevRX = prevRY = -1; }
+  if (st == 1) {
+    upN = 0;
+    if (!stableDown && downN > 0 && (abs(rx - lastX) > JITTER_PX || abs(ry - lastY) > JITTER_PX)) downN = 1; else if (downN < 255) downN++;
+    lastX = rx; lastY = ry;
+    if (downN >= PRESS_FRAMES) stableDown = true;
+  } else if (st == 0) { downN = 0; if (upN < 255) upN++; if (upN >= RELEASE_FRAMES) stableDown = false; }
+  if (stableDown) { ox = lastX; oy = lastY; }
+  return stableDown;
+}
+static bool readTouchRotated(uint16_t* x, uint16_t* y) {   // same convention as LovyanGFX's rotated touch
+  uint16_t rx, ry; if (!cstFiltered(rx, ry)) return false;
+  const int W0 = TFT_NATIVE_W, H0 = TFT_NATIVE_H;
+  switch (g_settings.rotation & 3) {
+    case 0: *x = rx; *y = ry; break;
+    case 1: *x = ry; *y = W0 - 1 - rx; break;
+    case 2: *x = W0 - 1 - rx; *y = H0 - 1 - ry; break;
+    default: *x = H0 - 1 - ry; *y = rx; break;
+  }
+  return true;
+}
+#endif
+
 static void touchCb(lv_indev_drv_t*, lv_indev_data_t* data) {
   static uint8_t stable = 0;
   static lv_coord_t lx = 0, ly = 0;
   uint16_t x, y;
   uint32_t t0 = micros();
+#if defined(AITL_TOUCH_CST8XX)
+  bool touched = readTouchRotated(&x, &y);
+#else
   bool touched = tft.getTouch(&x, &y);
+#endif
   s_touchUs += micros() - t0; s_touchN++;
   s_lastRaw = {touched, x, y};
   if (touched) {
@@ -238,6 +315,9 @@ void displayBegin() {
   s_dispDrv.hor_res = displayW(); s_dispDrv.ver_res = displayH();
   s_dispDrv.flush_cb = flushCb; s_dispDrv.draw_buf = &s_drawBuf; s_dispDrv.monitor_cb = monitorCb;
   lv_disp_drv_register(&s_dispDrv);
+#if defined(AITL_TOUCH_CST8XX)
+  cstBegin();
+#endif
   lv_indev_drv_init(&s_indevDrv);
   s_indevDrv.type = LV_INDEV_TYPE_POINTER; s_indevDrv.read_cb = touchCb;
   s_indevDrv.long_press_time = g_settings.longPressMs;

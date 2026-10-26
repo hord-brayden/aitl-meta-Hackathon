@@ -76,7 +76,7 @@ Any widget may carry `"hidden": "${expr}"`. Every `text` is a template: `${expr}
 `set {k: v}` · `inc`/`dec "k"` or `{"k": 5}` · `toggle "k"` · `append {"k": "line ${x}", "max": 20}` ·
 `toast "text"` · `led idle|green|red|amber|blue|thinking|off` · `beep {freq, ms}` ·
 `gpio.mode {pin, mode: in|in_pullup|out}` · `gpio.write {pin, value}` · `gpio.read {pin, into}` · `adc.read {pin, into}` ·
-`i2c.scan {into}` · `i2c.read {addr, reg, len<=32, into}` (first <=4 bytes as a number in `into`, hex in `into_hex`) · `i2c.write {addr, reg, bytes[]}` (user bus on the P3 header: SDA 21, SCL 22) ·
+`i2c.scan {into}` · `i2c.read {addr, reg, len<=32, into}` (first <=4 bytes as a number in `into`, hex in `into_hex`) · `i2c.write {addr, reg, bytes[]}` (user bus: SDA IO22 on P3, SCL IO26) ·
 `http {method GET|POST|PUT, url, headers, json|body, timeout<=15, via auto|bridge|direct, into, then[], else[]}` ·
 `ask {prompt, into, then[], else[]}` (asks the bridge's current AI model) · `hid.type "text"` · `hid.key "cmd+tab"` ·
 `notify {title, text}` (macOS) · `log "text"` · `event "name"` · `emit "name"` (to host scripts) ·
