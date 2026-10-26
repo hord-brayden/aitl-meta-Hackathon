@@ -4,6 +4,10 @@
 #include "avatar_img.h"
 #define AITL_HAS_AVATAR 1
 #endif
+#if __has_include("avatar_anim.h")
+#include "avatar_anim.h"
+#define AITL_HAS_AVATAR_ANIM 1   // typing frames: played inside the orb while Muse is working
+#endif
 
 namespace theme {
 #if defined(AITL_UI_BIG)
@@ -119,7 +123,7 @@ lv_obj_t* badge(lv_obj_t* parent, const char* sym, lv_coord_t size) {
 
 // ---------- the orb ----------
 // root (transparent, 1.4x) > halo (animated circle) > core (gradient circle, or the avatar image ringed by gradient)
-struct OrbInfo { lv_coord_t size; Orb mode; };
+struct OrbInfo { lv_coord_t size; Orb mode; lv_obj_t* av; lv_timer_t* anim; uint8_t frame; };
 static void haloAnim(void* var, int32_t v) {   // v: 0..100
   lv_obj_t* halo = (lv_obj_t*)var; lv_obj_t* root = lv_obj_get_parent(halo);
   OrbInfo* info = (OrbInfo*)lv_obj_get_user_data(root); if (!info) return;
@@ -133,11 +137,26 @@ static void orbStart(lv_obj_t* halo, uint32_t period) {
   lv_anim_set_values(&a, 0, 100); lv_anim_set_time(&a, period); lv_anim_set_playback_time(&a, period);
   lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE); lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out); lv_anim_start(&a);
 }
-static void orbDeleted(lv_event_t* e) { lv_obj_t* root = lv_event_get_target(e); OrbInfo* i = (OrbInfo*)lv_obj_get_user_data(root); if (i) { lv_obj_t* halo = lv_obj_get_child(root, 0); if (halo) lv_anim_del(halo, haloAnim); lv_mem_free(i); lv_obj_set_user_data(root, nullptr); } }
+#if defined(AITL_HAS_AVATAR_ANIM)
+static void avatarTick(lv_timer_t* t) {
+  OrbInfo* info = (OrbInfo*)t->user_data; if (!info || !info->av) return;
+  info->frame = (uint8_t)((info->frame + 1) % AITL_AVATAR_FRAMES); lv_img_set_src(info->av, avatar_anim_frames[info->frame]);
+}
+#endif
+static void avatarPlay(OrbInfo* info, bool play) {
+#if defined(AITL_HAS_AVATAR_ANIM)
+  if (!info->av) return;
+  if (play && !info->anim) { info->frame = 0; info->anim = lv_timer_create(avatarTick, 110, info); }
+  else if (!play && info->anim) { lv_timer_del(info->anim); info->anim = nullptr; lv_img_set_src(info->av, &avatar_img); }
+#else
+  (void)info; (void)play;
+#endif
+}
+static void orbDeleted(lv_event_t* e) { lv_obj_t* root = lv_event_get_target(e); OrbInfo* i = (OrbInfo*)lv_obj_get_user_data(root); if (i) { lv_obj_t* halo = lv_obj_get_child(root, 0); if (halo) lv_anim_del(halo, haloAnim); if (i->anim) lv_timer_del(i->anim); lv_mem_free(i); lv_obj_set_user_data(root, nullptr); } }
 lv_obj_t* orb(lv_obj_t* parent, lv_coord_t size, bool animate) {
   lv_obj_t* root = lv_obj_create(parent); lv_obj_remove_style_all(root);
   lv_coord_t R = size + size * 40 / 100; lv_obj_set_size(root, R, R); lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-  OrbInfo* info = (OrbInfo*)lv_mem_alloc(sizeof(OrbInfo)); info->size = size; info->mode = Orb::Idle; lv_obj_set_user_data(root, info);
+  OrbInfo* info = (OrbInfo*)lv_mem_alloc(sizeof(OrbInfo)); info->size = size; info->mode = Orb::Idle; info->av = nullptr; info->anim = nullptr; info->frame = 0; lv_obj_set_user_data(root, info);
   lv_obj_add_event_cb(root, orbDeleted, LV_EVENT_DELETE, nullptr);
   lv_obj_t* halo = lv_obj_create(root); lv_obj_remove_style_all(halo); lv_obj_set_size(halo, size, size); lv_obj_set_style_radius(halo, LV_RADIUS_CIRCLE, 0);
   gradient(halo, false); lv_obj_set_style_bg_opa(halo, 60, 0); lv_obj_center(halo); lv_obj_clear_flag(halo, LV_OBJ_FLAG_SCROLLABLE);
@@ -148,6 +167,7 @@ lv_obj_t* orb(lv_obj_t* parent, lv_coord_t size, bool animate) {
     lv_obj_t* av = lv_img_create(core); lv_img_set_src(av, &avatar_img);
     lv_coord_t inner = size - 6; lv_img_set_zoom(av, (256 * inner) / AITL_AVATAR_SIZE); lv_img_set_size_mode(av, LV_IMG_SIZE_MODE_REAL);
     lv_obj_set_size(av, inner, inner); lv_obj_set_style_radius(av, LV_RADIUS_CIRCLE, 0); lv_obj_set_style_clip_corner(av, true, 0); lv_obj_center(av);
+    info->av = av;
   }
 #endif
   if (animate) orbStart(halo, 2400); else lv_obj_add_flag(halo, LV_OBJ_FLAG_HIDDEN);
@@ -159,10 +179,10 @@ void orbSetMode(lv_obj_t* root, Orb mode) {
   lv_obj_t* halo = lv_obj_get_child(root, 0); lv_obj_t* core = lv_obj_get_child(root, 1);
   lv_obj_clear_flag(halo, LV_OBJ_FLAG_HIDDEN);
   switch (mode) {
-    case Orb::Idle: gradient(halo, false); gradient(core, false); orbStart(halo, 2400); break;
-    case Orb::Busy: gradient(halo, false); gradient(core, false); orbStart(halo, 650); break;
-    case Orb::Attention: lv_obj_set_style_bg_color(halo, lv_color_hex(MU_WARN), 0); lv_obj_set_style_bg_grad_color(halo, lv_color_hex(MU_WARN), 0); orbStart(halo, 900); break;
-    case Orb::Offline: lv_anim_del(halo, haloAnim); lv_obj_add_flag(halo, LV_OBJ_FLAG_HIDDEN);
+    case Orb::Idle: gradient(halo, false); gradient(core, false); orbStart(halo, 2400); avatarPlay(info, false); break;
+    case Orb::Busy: gradient(halo, false); gradient(core, false); orbStart(halo, 650); avatarPlay(info, true); break;
+    case Orb::Attention: avatarPlay(info, false); lv_obj_set_style_bg_color(halo, lv_color_hex(MU_WARN), 0); lv_obj_set_style_bg_grad_color(halo, lv_color_hex(MU_WARN), 0); orbStart(halo, 900); break;
+    case Orb::Offline: lv_anim_del(halo, haloAnim); lv_obj_add_flag(halo, LV_OBJ_FLAG_HIDDEN); avatarPlay(info, false);
       lv_obj_set_style_bg_color(core, lv_color_hex(MU_RAISED), 0); lv_obj_set_style_bg_grad_color(core, lv_color_hex(MU_LINE), 0); break;
   }
 }

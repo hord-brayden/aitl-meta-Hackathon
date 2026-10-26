@@ -1,45 +1,82 @@
 #!/usr/bin/env python3
-"""Turn a PNG (your Muse avatar, a screenshot of it, any picture) into an LVGL 8 image for the firmware.
+"""Turn your Muse avatar (PNG/JPG, any size) into LVGL 8 images for the firmware.
 
-    python3 tools/avatar_to_lvgl.py ~/Downloads/muse-avatar.png            # -> firmware/src/ui/avatar_img.c (64x64)
-    python3 tools/avatar_to_lvgl.py pic.png --size 96 --name avatar_img
+    python3 tools/avatar_to_lvgl.py avatar.png --round                       # still -> firmware/src/ui/avatar_img.c/.h
+    python3 tools/avatar_to_lvgl.py avatar.png --round --frames frames/ --step 2   # + typing animation -> avatar_anim.c/.h
 
-Writes RGB565 (LV_COLOR_16_SWAP) with an alpha channel, square, resized with a box filter, circular mask optional
-(--round). Needs Pillow: pip install pillow. Rebuild the firmware afterwards (pio run -t upload); the home screen and
-boot screen show the image when it is present.
+Options: --size N (square output, default 98 = the inside of the 4" home orb), --crop X,Y,W,H (source pixels, before
+resizing; defaults to the centred square), --key-white (make a white background transparent: for exports without alpha),
+--round (circular alpha mask), --frames DIR (JPG/PNG frames, sorted by name) with --step N (keep every Nth) and
+--frames-crop X,Y,W,H, --preview out.png (composite of the result on the orb gradient, to check before flashing).
+Output is byte-swapped RGB565 + alpha (LV_COLOR_16_SWAP). Needs Pillow + numpy (python3 -m pip install pillow numpy).
+Rebuild the firmware afterwards; the orb shows the still, and plays the frames while Muse is working.
 """
 import argparse, pathlib, sys
 
+def load(path, crop, size, key_white, rnd, Image, ImageDraw, np):
+    im = Image.open(path).convert("RGBA")
+    if key_white:
+        a = np.array(im).astype(np.int32); lo = a[..., :3].min(axis=2)
+        alpha = np.clip((238 - lo) * 255 // 30, 0, 255); alpha = np.where(lo < 208, 255, alpha)
+        a[..., 3] = np.minimum(a[..., 3], alpha); im = Image.fromarray(a.astype(np.uint8), "RGBA")
+    w, h = im.size
+    if crop: x, y, cw, ch = crop
+    else: s = min(w, h); x, y, cw, ch = (w - s) // 2, (h - s) // 2, s, s
+    im = im.crop((x, y, x + cw, y + ch)).resize((size, size), Image.LANCZOS)
+    if rnd:
+        mask = Image.new("L", (size, size), 0); ImageDraw.Draw(mask).ellipse((0, 0, size - 1, size - 1), fill=255)
+        r, g, b, al = im.split(); al = Image.fromarray(np.minimum(np.array(al), np.array(mask))); im = Image.merge("RGBA", (r, g, b, al))
+    return im
+
+def encode(im):
+    out = bytearray()
+    for r, g, b, al in im.getdata():
+        v = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3); out += bytes(((v >> 8) & 0xFF, v & 0xFF, al))
+    return out
+
+def cdesc(name, size, data):
+    body = ",".join(f"0x{b:02x}" for b in data)
+    return (f"const uint8_t {name}_map[] = {{{body}}};\n"
+            f"const lv_img_dsc_t {name} = {{ .header = {{ .cf = LV_IMG_CF_TRUE_COLOR_ALPHA, .always_zero = 0, .reserved = 0, .w = {size}, .h = {size} }}, .data_size = {len(data)}, .data = {name}_map }};\n")
+
+def xywh(s): return tuple(int(v) for v in s.split(",")) if s else None
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("png"); ap.add_argument("--size", type=int, default=64); ap.add_argument("--name", default="avatar_img")
-    ap.add_argument("--round", action="store_true", help="apply a circular alpha mask")
+    ap.add_argument("png"); ap.add_argument("--size", type=int, default=98); ap.add_argument("--name", default="avatar_img")
+    ap.add_argument("--crop"); ap.add_argument("--key-white", action="store_true"); ap.add_argument("--round", action="store_true")
+    ap.add_argument("--frames"); ap.add_argument("--step", type=int, default=1); ap.add_argument("--frames-crop"); ap.add_argument("--preview")
     ap.add_argument("--out", default=str(pathlib.Path(__file__).resolve().parents[1] / "firmware" / "src" / "ui" / "avatar_img.c"))
     a = ap.parse_args()
     try:
-        from PIL import Image, ImageDraw
+        from PIL import Image, ImageDraw; import numpy as np
     except ImportError:
-        sys.exit("pip install pillow")
-    im = Image.open(a.png).convert("RGBA")
-    w, h = im.size; s = min(w, h); im = im.crop(((w - s) // 2, (h - s) // 2, (w - s) // 2 + s, (h - s) // 2 + s)).resize((a.size, a.size), Image.LANCZOS)
-    if a.round:
-        mask = Image.new("L", (a.size, a.size), 0); ImageDraw.Draw(mask).ellipse((0, 0, a.size - 1, a.size - 1), fill=255)
-        r, g, b, al = im.split(); al = Image.fromarray(__import__("numpy").minimum(__import__("numpy").array(al), __import__("numpy").array(mask))) if False else Image.composite(al, Image.new("L", im.size, 0), mask); im = Image.merge("RGBA", (r, g, b, al))
-    px = im.load(); out = []
-    for y in range(a.size):
-        for x in range(a.size):
-            r, g, b, al = px[x, y]
-            v = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
-            out += [(v >> 8) & 0xFF, v & 0xFF, al]          # byte-swapped RGB565 (LV_COLOR_16_SWAP=1) + alpha
-    body = ",".join(f"0x{b:02x}" for b in out)
-    c = f'''// Generated by tools/avatar_to_lvgl.py from {pathlib.Path(a.png).name} ({a.size}x{a.size}). Do not edit.
-#include <lvgl.h>
-const uint8_t {a.name}_map[] = {{{body}}};
-const lv_img_dsc_t {a.name} = {{ .header = {{ .cf = LV_IMG_CF_TRUE_COLOR_ALPHA, .always_zero = 0, .reserved = 0, .w = {a.size}, .h = {a.size} }}, .data_size = {len(out)}, .data = {a.name}_map }};
-'''
-    pathlib.Path(a.out).write_text(c)
-    pathlib.Path(a.out).with_suffix(".h").write_text(f"#pragma once\n#include <lvgl.h>\n#ifdef __cplusplus\nextern \"C\" {{\n#endif\nextern const lv_img_dsc_t {a.name};\n#ifdef __cplusplus\n}}\n#endif\n#define AITL_AVATAR_SIZE {a.size}\n")
-    print(f"wrote {a.out} ({a.size}x{a.size}, {len(out)} bytes). Rebuild: cd firmware && pio run -t upload")
+        sys.exit("python3 -m pip install pillow numpy")
+    still = load(a.png, xywh(a.crop), a.size, a.key_white, a.round, Image, ImageDraw, np)
+    out = pathlib.Path(a.out)
+    out.write_text(f"// Generated by tools/avatar_to_lvgl.py from {pathlib.Path(a.png).name} ({a.size}x{a.size}). Do not edit.\n#include <lvgl.h>\n" + cdesc(a.name, a.size, encode(still)))
+    out.with_suffix(".h").write_text(f"#pragma once\n#include <lvgl.h>\n#ifdef __cplusplus\nextern \"C\" {{\n#endif\nextern const lv_img_dsc_t {a.name};\n#ifdef __cplusplus\n}}\n#endif\n#define AITL_AVATAR_SIZE {a.size}\n")
+    print(f"wrote {out} ({a.size}x{a.size})")
+    frames = []
+    if a.frames:
+        files = sorted(p for p in pathlib.Path(a.frames).iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg"))[::max(1, a.step)]
+        frames = [load(p, xywh(a.frames_crop), a.size, a.key_white, a.round, Image, ImageDraw, np) for p in files]
+        anim = out.with_name("avatar_anim.c")
+        c = f"// Generated by tools/avatar_to_lvgl.py from {len(frames)} frames in {pathlib.Path(a.frames).name}/ ({a.size}x{a.size}). Do not edit.\n#include <lvgl.h>\n"
+        for i, fr in enumerate(frames): c += cdesc(f"avatar_anim_{i}", a.size, encode(fr))
+        c += "const lv_img_dsc_t* const avatar_anim_frames[] = {" + ",".join(f"&avatar_anim_{i}" for i in range(len(frames))) + "};\n"
+        anim.write_text(c)
+        anim.with_suffix(".h").write_text(f"#pragma once\n#include <lvgl.h>\n#ifdef __cplusplus\nextern \"C\" {{\n#endif\nextern const lv_img_dsc_t* const avatar_anim_frames[];\n#ifdef __cplusplus\n}}\n#endif\n#define AITL_AVATAR_FRAMES {len(frames)}\n")
+        print(f"wrote {anim} ({len(frames)} frames, {len(frames) * a.size * a.size * 3 // 1024} KB)")
+    if a.preview:
+        n = 1 + len(frames); S = a.size + 12; sheet = Image.new("RGBA", (S * n, S), (15, 17, 23, 255))
+        for i, im in enumerate([still] + frames):
+            grad = Image.new("RGBA", (a.size + 6, a.size + 6)); d = ImageDraw.Draw(grad)
+            for yy in range(a.size + 6):
+                t = yy / (a.size + 5); d.line([(0, yy), (a.size + 6, yy)], fill=(int(46 + (232 - 46) * t), int(230 + (121 - 230) * t), int(214 + (249 - 214) * t), 255))
+            m = Image.new("L", grad.size, 0); ImageDraw.Draw(m).ellipse((0, 0, a.size + 5, a.size + 5), fill=255); grad.putalpha(m)
+            sheet.alpha_composite(grad, (i * S + 3, 3)); sheet.alpha_composite(im, (i * S + 6, 6))
+        sheet.save(a.preview); print(f"preview {a.preview}")
 
 if __name__ == "__main__":
     main()

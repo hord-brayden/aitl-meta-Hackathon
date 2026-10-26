@@ -34,3 +34,19 @@ with the "Back to …" and "Mac actions" pills in a top row. Applet content is a
 (`xl` numerals 36, `xxl` 48, charts 140 px). Settings lays its cards in two columns. Boot: orb 140, wordmark 28.
 Draw buffers on 480-wide panels are 2 × 480×12 (23 KB) so ≈ 80 KB of heap stays free with an applet on screen.
 Captures: `docs/img/4in-*.png`.
+
+## Avatar
+
+The orb shows your Muse avatar. Sources live in `assets/avatar/` (`still.jpg` plus the `typing/` frames exported from the
+Muse app); `tools/avatar_to_lvgl.py` turns them into `firmware/src/ui/avatar_img.c` (the still) and `avatar_anim.c`
+(the typing loop), both checked in so a clean clone builds with the face on. Regenerate after swapping the images:
+
+    python3 tools/avatar_to_lvgl.py assets/avatar/still.jpg --key-white --round --crop 30,0,180,180 \
+        --frames assets/avatar/typing --step 2 --frames-crop 0,0,240,240 --preview /tmp/avatar.png
+
+`--key-white` makes a white export background transparent so the orb gradient shows behind the figure; `--round` masks
+it to the circle; `--preview` writes a strip of the still and every frame on the gradient so you can judge the crop
+before flashing. The still is drawn while Muse is idle; while a reply streams (`Orb::Busy`) the orb plays the typing
+frames at ~9 fps straight from flash (no RAM cost; about 28 KB of flash per 98×98 frame).
+
+![4" home with avatar](img/4in-home.png) ![while Muse is working](img/4in-home-busy.png)
