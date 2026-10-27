@@ -84,7 +84,7 @@ if MARK not in c.read_text():
     if old not in s: sys.exit("apply.py: panel creation anchor not found")
     s = s.replace(old, new, 1)
     old = "    if (err == ESP_OK) err = esp_lcd_panel_invert_color(s_panel, true);"
-    new = f"#if CONFIG_{MARK} || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796\n    if (err == ESP_OK) err = esp_lcd_panel_invert_color(s_panel, false);   // CYD panels are not inverted\n#else\n    if (err == ESP_OK) err = esp_lcd_panel_invert_color(s_panel, true);\n#endif"
+    new = f"#if CONFIG_{MARK} || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796\n    if (err == ESP_OK) err = esp_lcd_panel_invert_color(s_panel, false);   // CYD panels are not inverted\n#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796\n    if (err == ESP_OK) err = esp_lcd_panel_mirror(s_panel, true, false);   // the Hosyond 4-inch panel scans right to left\n#endif\n#else\n    if (err == ESP_OK) err = esp_lcd_panel_invert_color(s_panel, true);\n#endif"
     if old not in s: sys.exit("apply.py: invert anchor not found")
     s = s.replace(old, new, 1)
     old = "        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,"
