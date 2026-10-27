@@ -41,6 +41,22 @@ setup. The port adds two ways to add more without re-pairing:
 
 A 5 s BOOT hold still erases everything and re-enters pairing, even while an applet runs.
 
+## microSD card (branch `sd-card`)
+
+The CYD boards' card slot (VSPI, CS 5) becomes storage your Muse can use, mounted only while an action runs because a
+mounted FAT volume costs ~8 KB of this board's RAM:
+
+| command / action | what it does |
+|---|---|
+| `sd.append {file,text}` | append a line: logs that need no network and survive reboots |
+| `sd.read {file,tail}` | the last bytes of a file (into state with `to` as an action) |
+| `sd.list`, `sd.delete` | the `mc` folder |
+| `sd.fetch {path,file}` | copy a file from the Muse VM onto the card in 2 KB Range chunks over the control session |
+| `sd.draw {file,row}` | show a baseline JPEG from the card through Meta's decoder: no download, so no memory wall |
+
+"Fetch workspace/cat.jpg to the card, then draw it" is the image cache: one download, shown offline afterwards.
+`gadget/port/apply.py` teaches Meta's `image_fetch.c` a file source for that (`image_fetch_start_file`).
+
 ## What the port changes (`gadget/port/apply.py`)
 - `devices/sdkconfig.cyd24`: classic ESP32, 4 MB DIO, no PSRAM, BLE-only controller, tunnel off, BOOT on GPIO0,
   BLE name suffix `-CYD`, custom 4 MB partition table (`partitions_cyd24_4mb.csv`: single factory app).

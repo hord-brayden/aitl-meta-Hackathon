@@ -130,7 +130,7 @@ for name in ("happy_anim.c", "happy_anim.h"):
 
 # --- CYD: Musecorder applet runtime (gadget/port/musecorder -> main/, commands applet.*) ---
 mc = pathlib.Path(__file__).resolve().parent / "musecorder"
-for name in ("musecorder.cpp", "musecorder.h"):
+for name in ("musecorder.cpp", "musecorder.h", "musecorder_sd.c", "musecorder_sd.h"):
     srcf = mc / name; dst = root / "main" / name
     if not dst.exists() or dst.read_bytes() != srcf.read_bytes():
         dst.write_bytes(srcf.read_bytes()); print(f"  copied main/{name}")
@@ -139,6 +139,9 @@ if '"musecorder.cpp"' not in t:
     t = t.replace('    "app.c"\n', '    "app.c"\n    "musecorder.cpp"\n', 1); cm.write_text(t); print("  patched main/CMakeLists.txt (musecorder.cpp)")
 if "    esp_adc\n" not in t:
     t = t.replace("    esp_driver_gpio\n", "    esp_driver_gpio\n    esp_adc\n", 1); cm.write_text(t); print("  patched main/CMakeLists.txt (esp_adc for adc.read)")
+if '"musecorder_sd.c"' not in t:
+    t = t.replace('    "musecorder.cpp"\n', '    "musecorder.cpp"\n    "musecorder_sd.c"\n', 1)
+    t = t.replace("    esp_adc\n", "    esp_adc\n    fatfs\n    sdmmc\n    esp_driver_sdspi\n", 1); cm.write_text(t); print("  patched main/CMakeLists.txt (microSD)")
 kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
 if "HOMEHUB_MUSECORDER" not in t:
     t = t.replace("    config HOMEHUB_SENSECAP_SENSORS\n", (
@@ -193,6 +196,12 @@ if "MUSECORDER_INSTALL_DESC" not in t:
         "        cJSON_AddItemToObject(forget_required, \"ssid\", string_param(\"Network name.\"));\n"
         "        add_command(commands, \"wifi.forget\", MUSECORDER_WIFI_FORGET_DESC, forget_required, nullptr);\n"
         "        add_command(commands, \"wifi.list\", MUSECORDER_WIFI_LIST_DESC, nullptr, nullptr);\n"
+        "        add_command(commands, \"sd.list\", MUSECORDER_SD_LIST_DESC, nullptr, nullptr);\n"
+        "        { cJSON *req = cJSON_CreateObject(); cJSON_AddItemToObject(req, \"file\", string_param(\"File name on the card.\")); cJSON *opt = cJSON_CreateObject(); cJSON *tail = cJSON_CreateObject(); cJSON_AddStringToObject(tail, \"type\", \"integer\"); cJSON_AddStringToObject(tail, \"description\", \"How many bytes from the end (1-1024, default 384).\"); cJSON_AddItemToObject(opt, \"tail\", tail); add_command(commands, \"sd.read\", MUSECORDER_SD_READ_DESC, req, opt); }\n"
+        "        { cJSON *req = cJSON_CreateObject(); cJSON_AddItemToObject(req, \"file\", string_param(\"File name on the card.\")); cJSON_AddItemToObject(req, \"text\", string_param(\"The line to append.\")); add_command(commands, \"sd.append\", MUSECORDER_SD_APPEND_DESC, req, nullptr); }\n"
+        "        { cJSON *req = cJSON_CreateObject(); cJSON_AddItemToObject(req, \"file\", string_param(\"File name on the card.\")); add_command(commands, \"sd.delete\", MUSECORDER_SD_DELETE_DESC, req, nullptr); }\n"
+        "        { cJSON *req = cJSON_CreateObject(); cJSON_AddItemToObject(req, \"path\", string_param(\"Path of the file on this VM.\")); cJSON *opt = cJSON_CreateObject(); cJSON_AddItemToObject(opt, \"file\", string_param(\"Name to store it under on the card.\")); add_command(commands, \"sd.fetch\", MUSECORDER_SD_FETCH_DESC, req, opt); }\n"
+        "        { cJSON *req = cJSON_CreateObject(); cJSON_AddItemToObject(req, \"file\", string_param(\"File name on the card.\")); cJSON *opt = cJSON_CreateObject(); cJSON *rowp = cJSON_CreateObject(); cJSON_AddStringToObject(rowp, \"type\", \"integer\"); cJSON_AddStringToObject(rowp, \"description\", \"Row to draw the top at; default 0.\"); cJSON_AddItemToObject(opt, \"row\", rowp); add_command(commands, \"sd.draw\", MUSECORDER_SD_DRAW_DESC, req, opt); }\n"
         "    }\n"
         "#endif\n"
         "#if CONFIG_HOMEHUB_VOICE\n")
@@ -275,3 +284,34 @@ if "CYD_FETCH_RESERVE" not in t:
     t = t.replace("#define FETCH_RESERVE_BYTES (4 * 1024)\n", "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796   /* CYD_FETCH_RESERVE */\n#define FETCH_RESERVE_BYTES (2 * 1024)\n#else\n#define FETCH_RESERVE_BYTES (4 * 1024)\n#endif\n", 1)
     if "CYD_FETCH_RESERVE" not in t: sys.exit("apply.py: fetch reserve anchor not found")
     imf.write_text(t); print("  patched main/image_fetch.c (2 KB fetch reserve on CYD boards)")
+
+# --- CYD: a file on the microSD card as an image source for Meta's decoder (sd.draw) ---
+ih = root / "main" / "image_fetch.h"; t = ih.read_text()
+if "image_fetch_start_file" not in t:
+    t = t.replace("#include <stddef.h>\n", "#include <stddef.h>\n#include <stdio.h>\n", 1)
+    i = t.index("bool image_fetch_start_vm("); j = t.index(");", i) + 2
+    t = t[:j] + "\n// CYD_SD_SOURCE: the same, from an open file (closed by the caller in `done`).\nbool image_fetch_start_file(FILE *file, int row, image_fetch_done_cb done,\n                            void *user, const char **code, const char **message);" + t[j:]
+    ih.write_text(t); print("  patched main/image_fetch.h (file source)")
+ic = root / "main" / "image_fetch.c"; t = ic.read_text()
+if "CYD_SD_SOURCE" not in t:
+    reps = [
+        ("    bool vm;\n    int row;\n", "    bool vm;\n    FILE *file;   /* CYD_SD_SOURCE */\n    int row;\n"),
+        ("    if (f->vm) {\n        int n = vm_read(f, buf + have, len - have);",
+         "    if (f->file) {\n        size_t n = fread(buf + have, 1, len - have, f->file);\n        if (n == 0 && ferror(f->file)) return -1;\n        f->bytes += n;\n        return (int)have + (int)n;\n    }\n    if (f->vm) {\n        int n = vm_read(f, buf + have, len - have);"),
+        ("    if (f->vm ? vm_open(f, &result, msg, sizeof(msg))\n              : http_open(f, &result, msg, sizeof(msg))) {",
+         "    if (f->file ? true : f->vm ? vm_open(f, &result, msg, sizeof(msg))\n                         : http_open(f, &result, msg, sizeof(msg))) {"),
+        ("static bool start(const char *target, bool vm, int row, image_fetch_done_cb done,\n                  void *user, const char **code, const char **message) {",
+         "static bool start(const char *target, bool vm, int row, image_fetch_done_cb done,\n                  void *user, const char **code, const char **message, FILE *file) {"),
+        ('    } else if (!https && strncasecmp(target, "http://", 7) != 0) {', '    } else if (!file && !https && strncasecmp(target, "http://", 7) != 0) {'),
+        ("    if (!vm && (internal_free() < need || block < stack", "    if (!vm && !file && (internal_free() < need || block < stack"),
+        ("    f->vm = vm;\n    f->https = https;", "    f->vm = vm;\n    f->file = file;\n    f->https = https;"),
+        ("    return start(url, false, row, done, user, code, message);", "    return start(url, false, row, done, user, code, message, NULL);"),
+        ("    return start(path, true, row, done, user, code, message);\n}\n",
+         "    return start(path, true, row, done, user, code, message, NULL);\n}\n\nbool image_fetch_start_file(FILE *file, int row, image_fetch_done_cb done,\n                            void *user, const char **code, const char **message) {\n    return start(\"file\", false, row, done, user, code, message, file);\n}\n"),
+        ("bool image_fetch_start_vm(const char *path, int row, image_fetch_done_cb done,\n                          void *user, const char **code, const char **message) {\n    (void)path;",
+         "bool image_fetch_start_file(FILE *file, int row, image_fetch_done_cb done,\n                            void *user, const char **code, const char **message) {\n    (void)file;\n    (void)row;\n    (void)done;\n    (void)user;\n    *code = \"unsupported\";\n    *message = \"no display\";\n    return false;\n}\n\nbool image_fetch_start_vm(const char *path, int row, image_fetch_done_cb done,\n                          void *user, const char **code, const char **message) {\n    (void)path;"),
+    ]
+    for old, new in reps:
+        if old not in t: sys.exit("apply.py: image_fetch.c anchor not found: " + old[:60])
+        t = t.replace(old, new, 1)
+    ic.write_text(t); print("  patched main/image_fetch.c (file source for sd.draw)")

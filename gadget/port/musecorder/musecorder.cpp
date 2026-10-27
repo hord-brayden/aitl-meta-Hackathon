@@ -35,13 +35,19 @@ extern "C" {
 #include "button.h"
 #include "wifi_known.h"
 #include "link_pairing.h"
+#include "musecorder_sd.h"
+#include "image_fetch.h"
 void app_touch_short_press(void);   // app.c: the BOOT tap (confirms pairing) and the 5 s hold (erases setup), from the touchscreen
 void app_touch_long_press(void);
 }
 #include "esp_system.h"
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static const char *TAG = "musecorder";
 static bool pressCb(bool pressed);
+static cJSON *errorResult(const char *code, const char *message);
 
 #define MC_MAX_APPLET_BYTES 4096
 #define MC_MAX_APPLETS 5          // stored applets (the launcher lists them)
@@ -506,6 +512,114 @@ static void doI2c(const char *op, cJSON *a) {   // i2c.scan{to} i2c.read{addr,re
     i2c_master_bus_rm_device(d);
 }
 
+
+// ---------------------------------------------------------------- microSD (mounted only while an action runs)
+static std::string sdName(const std::string &in) { std::string n; for (char c : in) { if (isalnum((unsigned char)c) || c == '.' || c == '_' || c == '-') n += c; if (n.size() >= 24) break; } return n; }
+static std::string sdPath(const std::string &name) { return "/sd/mc/" + name; }
+static bool sdAppend(const std::string &file, const std::string &text) {
+    std::string name = sdName(file); if (name.empty()) { logf("sd.append: no file"); return false; }
+    if (!mc_sd_mount()) { logf("sd: no card"); return false; }
+    FILE *f = fopen(sdPath(name).c_str(), "a"); bool ok = f && fputs(text.c_str(), f) >= 0 && fputc('\n', f) != EOF; if (f) fclose(f);
+    mc_sd_unmount(); if (!ok) logf("sd.append failed"); return ok;
+}
+static std::string sdTail(const std::string &file, size_t n) {
+    std::string out, name = sdName(file); if (name.empty() || !mc_sd_mount()) { logf("sd: no card"); return out; }
+    FILE *f = fopen(sdPath(name).c_str(), "r");
+    if (f) { fseek(f, 0, SEEK_END); long sz = ftell(f); long from = sz > (long)n ? sz - (long)n : 0; fseek(f, from, SEEK_SET); char buf[128]; size_t k; while ((k = fread(buf, 1, sizeof buf, f)) > 0) out.append(buf, k); fclose(f); }
+    else logf("sd.read: no such file");
+    mc_sd_unmount(); return out;
+}
+static cJSON *sdList() {
+    cJSON *arr = cJSON_CreateArray(); if (!mc_sd_mount()) return arr;
+    DIR *d = opendir("/sd/mc");
+    if (d) { struct dirent *e; while ((e = readdir(d))) { struct stat st; if (stat(sdPath(e->d_name).c_str(), &st) == 0 && !S_ISDIR(st.st_mode)) { cJSON *o = cJSON_CreateObject(); cJSON_AddStringToObject(o, "file", e->d_name); cJSON_AddNumberToObject(o, "bytes", (double)st.st_size); cJSON_AddItemToArray(arr, o); } } closedir(d); }
+    mc_sd_unmount(); return arr;
+}
+static bool sdDelete(const std::string &file) { std::string name = sdName(file); if (name.empty() || !mc_sd_mount()) return false; bool ok = unlink(sdPath(name).c_str()) == 0; mc_sd_unmount(); return ok; }
+
+// VM file -> card, in Range chunks over the control session (what display.draw_file does, but into a file).
+struct SdFetch { std::string url, file; FILE *fp = nullptr; size_t got = 0, chunk = 2048, chunkGot = 0; int status = 0; bool fail = false; SemaphoreHandle_t done = nullptr; };
+static SdFetch *s_sdf = nullptr;
+static void sdFetchCb(void *ctx, int status, const uint8_t *data, size_t len, bool end) {
+    SdFetch *j = (SdFetch *)ctx; if (j != s_sdf) return;
+    if (status > 0) j->status = status;
+    if (data && len && j->fp && (j->status == 200 || j->status == 206)) { if (fwrite(data, 1, len, j->fp) != len) j->fail = true; j->got += len; j->chunkGot += len; }
+    if (status < 0) j->fail = true;
+    if (status < 0 || end) xSemaphoreGive(j->done);
+}
+static std::string vmRawPath(const std::string &path) {
+    std::string out = "/fs/raw/"; size_t i = 0; while (i < path.size() && path[i] == '/') i++;
+    for (; i < path.size(); i++) { unsigned char c = path[i]; if (isalnum(c) || strchr("-._~/", c)) out += (char)c; else { char b[4]; snprintf(b, sizeof b, "%%%02X", c); out += b; } }
+    return out;
+}
+static void sdFetchTask(void *arg) {
+    SdFetch *j = (SdFetch *)arg;
+    bool ok = mc_sd_mount(); bool mounted = ok;
+    if (ok) { j->fp = fopen(sdPath(j->file).c_str(), "w"); ok = j->fp != nullptr; }
+    if (!ok) { xSemaphoreTake(s_lock, portMAX_DELAY); logf("sd.fetch: %s", mounted ? "cannot create file" : "no card"); xSemaphoreGive(s_lock); }
+    while (ok) {
+        char range[48]; snprintf(range, sizeof range, "bytes=%u-%u", (unsigned)j->got, (unsigned)(j->got + j->chunk - 1));
+        const char *const headers[] = {"Range", range, nullptr};
+        j->chunkGot = 0; j->status = 0; j->fail = false;
+        int64_t id = noise_ctrl_req_open("GET", j->url.c_str(), headers, true, sdFetchCb, j);
+        if (id <= 0) { xSemaphoreTake(s_lock, portMAX_DELAY); logf("sd.fetch: session busy"); xSemaphoreGive(s_lock); ok = false; break; }
+        if (xSemaphoreTake(j->done, pdMS_TO_TICKS(15000)) != pdTRUE) { noise_ctrl_req_cancel(id); xSemaphoreTake(s_lock, portMAX_DELAY); logf("sd.fetch: timeout"); xSemaphoreGive(s_lock); ok = false; break; }
+        if (j->fail || !(j->status == 200 || j->status == 206 || j->status == 416)) { xSemaphoreTake(s_lock, portMAX_DELAY); logf("sd.fetch -> %d", j->status); xSemaphoreGive(s_lock); ok = false; break; }
+        if (j->status == 416 || j->status == 200 || j->chunkGot < j->chunk) break;   // the end of the file
+    }
+    if (j->fp) fclose(j->fp);
+    if (ok && j->got == 0) { ok = false; unlink(sdPath(j->file).c_str()); }
+    if (mounted) mc_sd_unmount();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (ok) logf("sd.fetch %s: %u bytes", j->file.c_str(), (unsigned)j->got);
+    s_state["sd.fetch"] = Value::S(ok ? "done" : "failed"); s_dirty_screen = true;
+    if (s_sdf == j) s_sdf = nullptr;
+    xSemaphoreGive(s_lock);
+    vSemaphoreDelete(j->done); delete j; vTaskDelete(nullptr);
+}
+static bool sdFetchStart(const std::string &path, const std::string &file) {   // under s_lock
+    if (s_sdf) { logf("sd.fetch: one at a time"); return false; }
+    if (!s_vm_up) { logf("sd.fetch: session down"); return false; }
+    if (path.empty()) { logf("sd.fetch: no path"); return false; }
+    SdFetch *j = new SdFetch(); j->url = vmRawPath(path);
+    j->file = sdName(file.empty() ? path.substr(path.rfind('/') + 1) : file); if (j->file.empty()) j->file = "fetched.bin";
+    j->done = xSemaphoreCreateBinary();
+    size_t mb = noise_ctrl_req_max_body(); if (mb && mb < j->chunk) j->chunk = mb;
+    s_sdf = j;
+    if (xTaskCreate(sdFetchTask, "mc_sdfetch", 4096, j, 3, nullptr) != pdPASS) { vSemaphoreDelete(j->done); delete j; s_sdf = nullptr; logf("sd.fetch: no memory"); return false; }
+    logf("sd.fetch %s -> %s ...", path.c_str(), j->file.c_str());
+    return true;
+}
+// card -> screen through Meta's own decoder (no network, no download buffers)
+static FILE *s_sd_draw_fp = nullptr;
+static void sdDrawDone(const image_fetch_result_t *r, void *) {
+    if (s_sd_draw_fp) { fclose(s_sd_draw_fp); s_sd_draw_fp = nullptr; }
+    mc_sd_unmount();
+    xSemaphoreTake(s_lock, portMAX_DELAY); logf("sd.draw %s%s", r->ok ? "ok " : "failed: ", r->ok ? r->format : r->message); xSemaphoreGive(s_lock);
+}
+static bool sdDraw(const std::string &file, int row) {   // under s_lock
+    if (s_sd_draw_fp) { logf("sd.draw: busy"); return false; }
+    if (!mc_sd_mount()) { logf("sd: no card"); return false; }
+    s_sd_draw_fp = fopen(sdPath(sdName(file)).c_str(), "r");
+    if (!s_sd_draw_fp) { mc_sd_unmount(); logf("sd.draw: no such file"); return false; }
+    const char *code = nullptr, *msg = nullptr;
+    if (!image_fetch_start_file(s_sd_draw_fp, row, sdDrawDone, nullptr, &code, &msg)) { fclose(s_sd_draw_fp); s_sd_draw_fp = nullptr; mc_sd_unmount(); logf("sd.draw: %s", msg ? msg : "failed"); return false; }
+    return true;
+}
+static cJSON *sdCommand(const char *command, cJSON *params) {
+    std::string file = strOf(params, "file");
+    cJSON *r = cJSON_CreateObject(); cJSON *p = cJSON_CreateObject(); bool ok = true;
+    if (!strcmp(command, "sd.list")) cJSON_AddItemToObject(p, "files", sdList());
+    else if (!strcmp(command, "sd.read")) { int tail = (int)numOf(params, "tail", 384); if (tail < 1) tail = 1; if (tail > 1024) tail = 1024; cJSON_AddStringToObject(p, "text", sdTail(file, (size_t)tail).c_str()); }
+    else if (!strcmp(command, "sd.append")) ok = sdAppend(file, strOf(params, "text"));
+    else if (!strcmp(command, "sd.delete")) ok = sdDelete(file);
+    else if (!strcmp(command, "sd.fetch")) { ok = sdFetchStart(strOf(params, "path"), file); cJSON_AddBoolToObject(p, "started", ok); }
+    else if (!strcmp(command, "sd.draw")) { ok = sdDraw(file, (int)numOf(params, "row", IMAGE_FETCH_DEFAULT_ROW)); cJSON_AddBoolToObject(p, "started", ok); }
+    else { cJSON_Delete(r); cJSON_Delete(p); return errorResult("unknown_command", "no such sd command"); }
+    if (!ok && !s_log.empty()) cJSON_AddStringToObject(p, "detail", s_log.back().c_str());
+    cJSON_AddBoolToObject(r, "ok", ok); cJSON_AddItemToObject(r, "payload", p); return r;
+}
+
 // ---------------------------------------------------------------- actions
 static void runActions(cJSON *list, int depth);
 
@@ -682,6 +796,10 @@ static void runOne(cJSON *a, int depth) {
     if (cJSON *x = cJSON_GetObjectItem(a, "i2c.scan")) { doI2c("scan", x); s_dirty_screen = true; }
     if (cJSON *x = cJSON_GetObjectItem(a, "i2c.read")) { doI2c("read", x); s_dirty_screen = true; }
     if (cJSON *x = cJSON_GetObjectItem(a, "i2c.write")) doI2c("write", x);
+    if (cJSON *x = cJSON_GetObjectItem(a, "sd.append")) sdAppend(strOf(x, "file"), strOf(x, "text"));
+    if (cJSON *x = cJSON_GetObjectItem(a, "sd.read")) { std::string to = strOf(x, "to"); s_state[to.empty() ? "sd" : to] = Value::S(sdTail(strOf(x, "file"), (size_t)numOf(x, "tail", 384))); s_dirty_screen = true; }
+    if (cJSON *x = cJSON_GetObjectItem(a, "sd.fetch")) sdFetchStart(strOf(x, "path"), strOf(x, "file"));
+    if (cJSON *x = cJSON_GetObjectItem(a, "sd.draw")) sdDraw(strOf(x, "file"), (int)numOf(x, "row", IMAGE_FETCH_DEFAULT_ROW));
     if (cJSON *x = cJSON_GetObjectItem(a, "draw.rect")) doDrawRect(x);
     if (cJSON *x = cJSON_GetObjectItem(a, "draw.text")) doDrawText(x);
     if (cJSON_GetObjectItem(a, "clear")) { clearRows(TOP_CLEAR, s_screen_h - TOP_CLEAR); if (!s_canvas) s_dirty_screen = true; }
@@ -966,6 +1084,7 @@ extern "C" bool musecorder_console_command(const char *line) {
 
 extern "C" cJSON *musecorder_command(const char *command, cJSON *params) {
     if (!strncmp(command, "wifi.", 5)) return wifiCommand(command, params);
+    if (!strncmp(command, "sd.", 3)) { if (!s_lock) return errorResult("unavailable", "runtime not ready"); xSemaphoreTake(s_lock, portMAX_DELAY); cJSON *r = sdCommand(command, params); xSemaphoreGive(s_lock); return r; }
     if (strncmp(command, "applet.", 7)) return nullptr;
     if (!s_lock) return errorResult("unavailable", "runtime not ready");
     if (!strcmp(command, "applet.install")) {

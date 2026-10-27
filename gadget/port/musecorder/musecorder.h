@@ -28,7 +28,7 @@ bool musecorder_console_command(const char *line);           // serial ">wifi=..
     "Screen items: text, big, bar{max}, gap, button{event,color}, buttons[{label,event}], canvas (rest of the screen is yours via draw.*). " \
     "Events: start, stop, boot:press, touch (sets touch.x touch.y; also touch:move), every:SECONDS, gpio:PIN:rise|fall|change (pins 4 16 17 21 22 25 26 32 34-39), custom names via applet.event. " \
     "Actions: set{k:v}, inc/dec/toggle k, log, if{if,then,else}, exit, led #rrggbb, tone{freq|freq:[..],ms} (speaker), pwm{pin,duty,freq}, gpio.write{pin,value}, gpio.read{pin,to}, adc.read{pin,to} (36 39 32 34 35), " \
-    "i2c.scan{to}, i2c.read{addr,reg,len,to}, i2c.write{addr,reg,data} (pins from applet i2c{sda,scl}, default 21/22), draw.rect{x,y,w,h,color}, draw.text{x,y,text,scale,color}, clear, " \
+    "i2c.scan{to}, i2c.read{addr,reg,len,to}, i2c.write{addr,reg,data} (pins from applet i2c{sda,scl}, default 21/22), draw.rect{x,y,w,h,color}, draw.text{x,y,text,scale,color}, clear, sd.append{file,text}, sd.read{file,to,tail}, sd.draw{file}, sd.fetch{path,file} (microSD), " \
     "muse.say \"text\" (posts into your chat with this Muse), muse.ask{text,to}, http{method,url,json,to} (may fail: little RAM), vm.write{path,text,append} (refused unless the credential has the scope). " \
     "${expr}: state keys, math, comparisons, functions len int floor ceil round abs min max pad(x,w,fill) mmss(seconds)=m:ss hhmmss clock random(lo,hi) uptime time. The name is drawn as the title automatically. Screen is 320x480 (y 28-452 usable). Holding a finger on the screen for 1 s opens the launcher (stored applets)."
 #define MUSECORDER_REMOVE_DESC "Stop the running applet and bring back the status screen (it stays stored). id: delete that stored applet. all:true deletes every stored applet."
@@ -38,6 +38,12 @@ bool musecorder_console_command(const char *line);           // serial ">wifi=..
 #define MUSECORDER_WIFI_ADD_DESC "Remember another Wi-Fi network on this gadget (up to 8); it joins whichever saved network is nearby after a reboot or when the current one drops. Ask the user for the password; it is stored on the device only."
 #define MUSECORDER_WIFI_FORGET_DESC "Forget a saved Wi-Fi network by ssid."
 #define MUSECORDER_WIFI_LIST_DESC "List the Wi-Fi networks this gadget remembers (names only)."
+#define MUSECORDER_SD_LIST_DESC "List the files on the gadget's microSD card (its mc folder) with sizes."
+#define MUSECORDER_SD_READ_DESC "Read the last bytes of a file on the microSD card (tail, default 384)."
+#define MUSECORDER_SD_APPEND_DESC "Append one line of text to a file on the microSD card: logs that survive reboots and need no network."
+#define MUSECORDER_SD_DELETE_DESC "Delete a file on the microSD card."
+#define MUSECORDER_SD_FETCH_DESC "Copy a file from this VM (path as display.draw_file takes it, e.g. workspace/cat.jpg) onto the microSD card as file (default: its own name). Runs in the background for a few seconds; applet.state's log then says 'sd.fetch <file>: N bytes'. A baseline JPEG up to about 240 px can then be shown any time with sd.draw, offline, with no memory wall."
+#define MUSECORDER_SD_DRAW_DESC "Draw a baseline JPEG (or raw RGB565) file from the microSD card on the screen; optional row. Replies at once; the applet log says sd.draw ok or why not."
 
 #ifdef __cplusplus
 }
