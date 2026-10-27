@@ -1146,7 +1146,7 @@ extern "C" bool musecorder_console_command(const char *line) {
         vTaskDelay(pdMS_TO_TICKS(20));
         for (int rst : {25, 4, 16}) gpio_set_level((gpio_num_t)rst, 1);
         vTaskDelay(pdMS_TO_TICKS(150));
-        printf("@touch after reset high on 25/4/16:\n"); i2cProbePins(33, 32); i2cProbePins(21, 22); i2cProbePins(19, 18);
+        printf("@touch after reset high on 25/4/16:\n"); i2cProbePins(33, 32); i2cProbePins(32, 33); i2cProbePins(21, 22); i2cProbePins(22, 21); i2cProbePins(26, 25); i2cProbePins(19, 18);
         for (int rst : {4, 16}) gpio_set_level((gpio_num_t)rst, 0);   // 4 is the amp enable, 16 the green LED on the first board
 #if MC_TOUCH_XPT2046
         // Candidate B: a separate bit-banged XPT2046 bus (Sunton-style resistive boards): CLK 25, MOSI 32, MISO 39, CS 33.
@@ -1167,6 +1167,20 @@ extern "C" bool musecorder_console_command(const char *line) {
             }
             if (i >= 10) { int bx = bb(0xD1), by = bb(0x91), bz = bb(0xB1); bb(0x90); printf("  B(bitbang 25/32/39/33) x=%d y=%d z1=%d", bx, by, bz); }
             printf("\n"); fflush(stdout); vTaskDelay(pdMS_TO_TICKS(500));
+        }
+        // Candidate C: an XPT2046 on the LCD bus behind another chip-select pin.
+        printf("@touch C: other CS pins on the LCD bus (keep pressing)\n"); fflush(stdout);
+        for (int cs : {21, 22, 26, 17, 16, 4, 32, 25}) {
+            spi_device_interface_config_t dc = {}; dc.clock_speed_hz = 1000000; dc.mode = 0; dc.spics_io_num = cs; dc.queue_size = 1; spi_device_handle_t d = nullptr;
+            if (spi_bus_add_device(SPI2_HOST, &dc, &d) != ESP_OK) { printf("@touch C cs=%d: add failed\n", cs); continue; }
+            int xs[3], ys[3], zs[3];
+            for (int k = 0; k < 3; k++) { spi_transaction_t t = {}; t.length = 24; t.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_USE_RXDATA;
+                t.tx_data[0] = 0xD1; spi_device_polling_transmit(d, &t); xs[k] = ((t.rx_data[1] << 8) | t.rx_data[2]) >> 3;
+                t.tx_data[0] = 0x91; spi_device_polling_transmit(d, &t); ys[k] = ((t.rx_data[1] << 8) | t.rx_data[2]) >> 3;
+                t.tx_data[0] = 0xB1; spi_device_polling_transmit(d, &t); zs[k] = ((t.rx_data[1] << 8) | t.rx_data[2]) >> 3;
+                t.tx_data[0] = 0x90; spi_device_polling_transmit(d, &t); vTaskDelay(pdMS_TO_TICKS(100)); }
+            spi_bus_remove_device(d); gpio_reset_pin((gpio_num_t)cs);
+            printf("@touch C cs=%d: x=%d,%d,%d y=%d,%d,%d z1=%d,%d,%d\n", cs, xs[0], xs[1], xs[2], ys[0], ys[1], ys[2], zs[0], zs[1], zs[2]); fflush(stdout);
         }
         xSemaphoreGive(s_lock);
         printf("@touch probe done; reboot to restore the pins\n");
