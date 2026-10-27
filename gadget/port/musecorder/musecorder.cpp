@@ -286,7 +286,13 @@ static bool ensureSubscribed() {
 }
 static void doMuseSay(const char *text, const char *to) {
     if (!s_vm_up) { logf("muse.say: session down"); return; }
+#if CONFIG_SPIRAM
     if (to) { s_ask_to = to; s_reply.clear(); ensureSubscribed(); }
+#else
+    // Chat subscriptions arrive as 16 KB frames, larger than this board's trimmed session buffers (the frame
+    // resets the session). Post only; the reply shows in the Muse app. Boards with PSRAM read it back here.
+    if (to) { s_ask_to.clear(); s_state[to] = Value::S("see your Muse chat"); s_dirty_screen = true; }
+#endif
     cJSON *b = cJSON_CreateObject(); cJSON_AddStringToObject(b, "message", render(text).asStr().c_str()); cJSON_AddStringToObject(b, "output_modality", "text");
     char *txt = cJSON_PrintUnformatted(b); cJSON_Delete(b); if (!txt) return;
     static const char *const headers[] = {"Content-Type", "application/json", nullptr};
