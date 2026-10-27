@@ -36,7 +36,7 @@ if MARK not in c.read_text():
     both = "CONFIG_HOMEHUB_LED_BACKEND_IDEASPARK_ST7789 || CONFIG_HOMEHUB_LED_BACKEND_WAVESHARE_C6_ST7789"
     n = s.count(f"#if {both}")
     s = s.replace(f"#if {both}", f"#if {both} || CONFIG_{MARK} || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796")
-    s = s.replace('#include "esp_lcd_panel_st7789.h"\n', f'#include "esp_lcd_panel_st7789.h"\n#if CONFIG_{MARK}\n#include "esp_lcd_panel_ili9341.h"\n#endif\n#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796\n#include "esp_lcd_panel_st7796.h"\n#endif\n', 1)
+    s = s.replace('#include "esp_lcd_panel_st7789.h"\n', f'#include "esp_lcd_panel_st7789.h"\n#if CONFIG_{MARK}\n#include "esp_lcd_ili9341.h"\n#endif\n#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796\n#include "esp_lcd_st7796.h"\n#endif\n', 1)
     block = f'''#elif CONFIG_{MARK}
 // Sunton ESP32-2432S024C / 2432S028: 240x320 ILI9341 on HSPI, backlight on GPIO27, reset tied to EN.
 #define LCD_NAME         "CYD ILI9341"
