@@ -1141,6 +1141,13 @@ extern "C" bool musecorder_console_command(const char *line) {
         if (!strcmp(arg, "cal")) { if (!s_touch_ok) { printf("@touch no touch device\n"); return true; } xSemaphoreTake(s_lock, portMAX_DELAY); wizStart(); xSemaphoreGive(s_lock); printf("@touch calibration on screen\n"); fflush(stdout); return true; }
         printf("@touch ok=%d errors=%u ticks=%u cal=%d\n", s_touch_ok, (unsigned)s_touch_err, (unsigned)s_ticks, s_cal.valid);
         i2cProbePins(33, 32); i2cProbePins(21, 22); i2cProbePins(27, 22);
+        // Capacitive controllers (GT911, FT6x36, CST8xx) stay silent while their reset pin is low: raise the usual ones and look again.
+        for (int rst : {25, 4, 16}) { gpio_reset_pin((gpio_num_t)rst); gpio_set_direction((gpio_num_t)rst, GPIO_MODE_OUTPUT); gpio_set_level((gpio_num_t)rst, 0); }
+        vTaskDelay(pdMS_TO_TICKS(20));
+        for (int rst : {25, 4, 16}) gpio_set_level((gpio_num_t)rst, 1);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        printf("@touch after reset high on 25/4/16:\n"); i2cProbePins(33, 32); i2cProbePins(21, 22); i2cProbePins(19, 18);
+        for (int rst : {4, 16}) gpio_set_level((gpio_num_t)rst, 0);   // 4 is the amp enable, 16 the green LED on the first board
 #if MC_TOUCH_XPT2046
         // Candidate B: a separate bit-banged XPT2046 bus (Sunton-style resistive boards): CLK 25, MOSI 32, MISO 39, CS 33.
         auto bb = [](uint8_t cmd) {
