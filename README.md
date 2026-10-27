@@ -45,6 +45,7 @@ screen back. Up to five applets stay on the device; tap the title bar to switch.
 | Images from Muse: `display.draw_file` straight from Muse's VM over the encrypted session (160 px JPEG in 307 ms), `display.draw_url` over plain `http://`, Meta's status animation replaced by your own Muse sprite | `gadget/port/gen_avatar_anim.py` |
 | Verified applets Muse wrote unaided from one sentence each: door tally, pomodoro, dice, sketch pad, today's calendar (Muse reads Google Calendar on its VM and puts the events on the device) | the Muse app |
 | Several Wi-Fi networks: `wifi.add/list/forget` from Muse, or `gadget/wifi.py` over USB from a gitignored `.env` | `gadget/wifi.py` |
+| microSD card, mounted only while in use: logs from applets, and an offline image cache (`sd` fetch from Muse's VM, draw from the card) | `gadget/port/musecorder/musecorder_sd.c` |
 | Ready-made applets to paste into the Muse chat: door tally, sketch pad, dice, voltmeter, I²C scanner | [`examples/gadget/`](examples/gadget/) |
 
 The **Mac-bridge personality** (the original AITL firmware: chat with Muse Spark on the device, Muse Code sessions and

@@ -26,7 +26,8 @@ a voltmeter, a picture frame. No reflash, no laptop, no API key: it rides on the
    encrypted session (a 160 px JPEG in 307 ms), plus a vector drawing API in applets (`draw.rect`, `draw.text`) and a
    finger-driven canvas.
 5. **Hardware is reachable from the chat.** Applet actions for the speaker (`tone`), PWM, GPIO in/out, ADC, I²C
-   scan/read/write, the RGB LED, HTTP, and (branch `sd-card`) a microSD card for logs and an offline image cache.
+   scan/read/write, the RGB LED, HTTP, and the microSD card: logs that need no network, and an offline image cache (the cat
+   copied from Muse's VM to the card in 540 ms, drawn from the card in 280 ms, no download).
 6. **Phone-free use.** A touch launcher (hold a finger for a second) switches between the five stored applets,
    recalibrates touch, or re-pairs; a tap confirms pairing. Applets persist across power cycles in their own flash
    partition. Three Wi-Fi networks are stored; Muse can teach it more (`wifi.add`).
@@ -37,7 +38,7 @@ a voltmeter, a picture frame. No reflash, no laptop, no API key: it rides on the
 
 - **Muse Gadget SDK** (ESP-IDF): pairing, Wi-Fi provisioning, the Noise control session, `link.register` (the device
   advertises 17 commands: Meta's `device.*` and `display.*`, plus `applet.install/remove/state/event`,
-  `wifi.add/forget/list`, and on the SD branch `sd.*`), `link.invoke` from Muse, and the chat route Meta's own boards
+  `wifi.add/forget/list`, `sd`), `link.invoke` from Muse, and the chat route Meta's own boards
   use (`POST /chat/stream`) for the device-to-chat push.
 - **The Muse app** is the only user interface for programming the device. Muse authors every applet from a natural
   language request; the device's command description is the spec.
@@ -54,7 +55,7 @@ a voltmeter, a picture frame. No reflash, no laptop, no API key: it rides on the
 | | Touch on the shared LCD SPI bus (XPT2046) and the CST820 on the 2.4" board; touch stand-ins for the BOOT button |
 | | Multi-network Wi-Fi: `wifi.*` commands and a serial console for adding networks over USB from a gitignored `.env` |
 | | Your Muse as the status sprite (GIF to Meta's cell-sprite converter) |
-| | microSD (branch): mount-on-demand logging, VM-to-card fetch in Range chunks, card-to-screen through Meta's decoder (file source patch) |
+| | microSD: mount-on-demand logging, VM-to-card fetch in Range chunks over the session, card-to-screen through Meta's decoder (file source patch) |
 
 ## Numbers
 
@@ -65,7 +66,7 @@ a voltmeter, a picture frame. No reflash, no laptop, no API key: it rides on the
 | Applet install, phone to screen | ~2 s |
 | 160 px JPEG from Muse's VM to screen | 307 ms |
 | Applet spec Muse receives | 1.6 KB (inside a 5.7 KB registration) |
-| Stored applets | 5 × 4 KB (branch `sd-card`: hundreds) |
+| Stored applets | 5 × 4 KB in flash; files and logs on the microSD card |
 
 ## Honest limits
 - No PSRAM: HTTPS from applets fails (needs a 17 KB block), Muse's chat *reply* is not read back onto the screen
