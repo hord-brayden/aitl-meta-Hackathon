@@ -25,8 +25,12 @@ extern "C" {   // Meta's C headers without C++ guards
 #include "pixel_font.h"
 }
 #include "noise_control.h"
+extern "C" {
+#include "button.h"
+}
 
 static const char *TAG = "musecorder";
+static bool pressCb(bool pressed);
 
 #define MC_MAX_APPLET_BYTES 4096
 #define MC_MAX_LOG 12
@@ -213,9 +217,13 @@ static void doHttp(cJSON *h) {
     if (xTaskCreate(httpWorker, "mc_http", 7168, &job, 3, nullptr) != pdPASS) { logf("http: no memory for worker"); vSemaphoreDelete(job.done); return; }
     xSemaphoreTake(job.done, pdMS_TO_TICKS(20000)); vSemaphoreDelete(job.done);
 }
+static int s_vm_status = 0; static char s_vm_body[64];
 static void vmWriteCb(void *ctx, int status, const uint8_t *data, size_t len, bool end) {
-    (void)ctx; (void)data; (void)len;
-    if (status < 0) logf("vm.write failed"); else if (end) logf("vm.write -> %d", status);
+    (void)ctx;
+    if (status > 0) s_vm_status = status;
+    if (data && len && !s_vm_body[0]) { size_t n = len < sizeof(s_vm_body) - 1 ? len : sizeof(s_vm_body) - 1; memcpy(s_vm_body, data, n); s_vm_body[n] = 0; }
+    if (status < 0) { logf("vm.write failed (session)"); s_vm_status = 0; s_vm_body[0] = 0; }
+    else if (end) { logf("vm.write -> %d %s", s_vm_status, s_vm_body); s_vm_status = 0; s_vm_body[0] = 0; }
 }
 static void doVmWrite(cJSON *w) {
     const char *path = cJSON_GetStringValue(cJSON_GetObjectItem(w, "path")); if (!path) { logf("vm.write: no path"); return; }
@@ -414,10 +422,16 @@ static void tickTask(void *) {
 extern "C" void musecorder_init(void) {
     s_lock = xSemaphoreCreateMutex();
     if (!led_status_display_info(&s_screen_w, &s_screen_h)) { s_screen_w = 0; }
+    button_set_press_cb(pressCb);
     xTaskCreate(tickTask, "musecorder", 4096, nullptr, 3, nullptr);
     ESP_LOGI(TAG, "ready (%dx%d)", s_screen_w, s_screen_h);
 }
 extern "C" void musecorder_vm_connected(void) { s_vm_up = true; }
+static bool pressCb(bool pressed) {
+    if (!s_running) return false;
+    if (pressed) s_tap_pending = true;
+    return true;   // claimed: not a Wi-Fi retry, rescan or setup reset while an applet runs
+}
 extern "C" bool musecorder_on_tap(void) {
     if (!s_running) return false;
     s_tap_pending = true;   // consumed by the tick task

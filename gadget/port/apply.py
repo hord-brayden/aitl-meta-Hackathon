@@ -197,3 +197,10 @@ if "CYD_STRIPE_CELLS" not in t:
     t = t.replace("#define LCD_ANIM_STRIPE_CELLS 8\n", "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796   /* CYD_STRIPE_CELLS */\n#define LCD_ANIM_STRIPE_CELLS 4\n#else\n#define LCD_ANIM_STRIPE_CELLS 8\n#endif\n", 1)
     if "CYD_STRIPE_CELLS" not in t: sys.exit("apply.py: stripe anchor not found")
     ls.write_text(t); print("  patched main/led_status.c (4-cell animation stripes on CYD boards)")
+
+# --- CYD: smaller TX reserve (no tunnel on these boards; the image fetcher keeps this much DMA memory free) ---
+nt = root / "main" / "noise_tunnel_internal.h"; t = nt.read_text()
+if "CYD_TX_RESERVE" not in t:
+    t = t.replace("#define NOISE_TX_DMA_RESERVE_BYTES (16 * 1024)\n", "#include \"sdkconfig.h\"\n#if (CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796) && !CONFIG_HOMEHUB_TUNNEL   /* CYD_TX_RESERVE */\n#define NOISE_TX_DMA_RESERVE_BYTES (6 * 1024)\n#else\n#define NOISE_TX_DMA_RESERVE_BYTES (16 * 1024)\n#endif\n", 1)
+    if "CYD_TX_RESERVE" not in t: sys.exit("apply.py: tx reserve anchor not found")
+    nt.write_text(t); print("  patched main/noise_tunnel_internal.h (6 KB TX reserve on CYD boards)")
