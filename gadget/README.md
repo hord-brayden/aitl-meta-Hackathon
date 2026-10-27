@@ -39,3 +39,28 @@ If the bars show blue where orange is expected, flip `LCD_RGB_ELEMENT_ORDER_BGR`
 ## Next step after pairing works
 Register device commands (`link.register` in `main/app.c`, see the SDK's `AGENTS.md` "Adding a command") so your
 Muse can call `applet.install` straight from the phone, and merge the Musecorder applet engine into this image.
+
+## Applets over Meta's channel (phone only, no Mac)
+
+The port adds a Musecorder applet runtime to Meta's firmware (`gadget/port/musecorder/`, built in as
+`CONFIG_HOMEHUB_MUSECORDER`). Once the gadget is paired and online, your Muse sees four extra commands and the
+format in their descriptions:
+
+| command | what it does |
+|---|---|
+| `applet.install` (json) | store and start a JSON tool: state, `screen` lines on the status display, `on` handlers (`start`, `boot:press`, `every:N`, `gpio:PIN:rise|fall|change`, custom names), actions (`set`, `inc`, `dec`, `toggle`, `log`, `led`, `gpio.write`, `gpio.read`, `vm.write`, `http`, `if`, `exit`) |
+| `applet.remove` | stop it and bring the avatar back |
+| `applet.state` (set?) | read state and the log, optionally assign keys first |
+| `applet.event` (name) | fire a custom event |
+
+Say to your Muse: "Install an applet on my gadget that counts BOOT presses, shows the count big, and appends the
+count to musecorder/tally.log on your VM every minute" and it writes the JSON itself. `vm.write` lands in your
+Muse's own files, so it can read the results back without any third-party service. The applet survives reboots
+(NVS) and a bad applet cannot brick the board: `applet.remove`, or a 5 s BOOT hold to re-pair, always works.
+
+Memory on the classic ESP32: Meta's session plus TLS leaves ~30 KB free, so the runtime keeps every buffer small
+and `http` (a second TLS connection) may fail; prefer `vm.write`. Boards with PSRAM (Freenove FNK0104B, Guition
+JC3248W535, Waveshare LCD-7) have none of these limits.
+
+Your Muse as the status sprite: `gadget/port/gen_avatar_anim.py` turns a GIF into Meta's cell-sprite format;
+`apply.py` installs the result.
