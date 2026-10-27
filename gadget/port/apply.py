@@ -204,3 +204,9 @@ if "CYD_TX_RESERVE" not in t:
     t = t.replace("#define NOISE_TX_DMA_RESERVE_BYTES (16 * 1024)\n", "#include \"sdkconfig.h\"\n#if (CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796) && !CONFIG_HOMEHUB_TUNNEL   /* CYD_TX_RESERVE */\n#define NOISE_TX_DMA_RESERVE_BYTES (6 * 1024)\n#else\n#define NOISE_TX_DMA_RESERVE_BYTES (16 * 1024)\n#endif\n", 1)
     if "CYD_TX_RESERVE" not in t: sys.exit("apply.py: tx reserve anchor not found")
     nt.write_text(t); print("  patched main/noise_tunnel_internal.h (6 KB TX reserve on CYD boards)")
+
+# --- CYD: raw button presses for applets (button.c only compiles the press hook for voice builds) ---
+bt = root / "main" / "button.c"; t = bt.read_text()
+if "CONFIG_HOMEHUB_MUSECORDER" not in t:
+    t = t.replace("#if CONFIG_HOMEHUB_VOICE\n", "#if CONFIG_HOMEHUB_VOICE || CONFIG_HOMEHUB_MUSECORDER\n")
+    bt.write_text(t); print("  patched main/button.c (press hook available to the applet runtime)")
