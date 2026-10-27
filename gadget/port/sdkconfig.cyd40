@@ -48,3 +48,12 @@ CONFIG_HOMEHUB_TUNNEL=n
 
 # Diagnostics: NimBLE host at debug so pairing attempts show every ATT/GAP step on the console.
 CONFIG_BT_NIMBLE_LOG_LEVEL_DEBUG=y
+
+# Internal RAM is all there is: size TLS input buffers per record and free TLS config data (as Meta's
+# c6-nopsram profile does), and halve the Wi-Fi/lwIP queues so the control session's buffers fit.
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=32
+CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=32

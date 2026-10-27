@@ -107,3 +107,14 @@ if "CYD_RANDOM_ADDR" not in t:
     t = t.replace("    s_synced = true;\n    start_advertising();",
                   "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796\n    { ble_addr_t ra; if (ble_hs_id_gen_rnd(1, &ra) == 0 && ble_hs_id_set_rnd(ra.val) == 0) ESP_LOGI(TAG, \"random static addr %02x:%02x:%02x:%02x:%02x:%02x\", ra.val[5], ra.val[4], ra.val[3], ra.val[2], ra.val[1], ra.val[0]); else ESP_LOGW(TAG, \"random addr failed; using public\"); }\n#endif\n    s_synced = true;\n    start_advertising();", 1)
     b.write_text(t); print("  patched main/ble_server.c (random static address on CYD boards)")
+
+# --- CYD: small control-session buffers (no PSRAM: the default 81 KB of session buffers never fit beside TLS -> "session buffer alloc failed") ---
+n = root / "main" / "noise_control.cpp"
+t = n.read_text()
+if "CYD_SMALL_SESSION" not in t:
+    t = t.replace("#if SMALL_CONTROL_SESSION && (CONFIG_MUSE_BOARD_M5STACK_CARDPUTER_ADV || CONFIG_MUSE_BOARD_AI_PASSPORT)\n#define CARDPUTER_CONTROL_SESSION 1",
+                  "#if (SMALL_CONTROL_SESSION && (CONFIG_MUSE_BOARD_M5STACK_CARDPUTER_ADV || CONFIG_MUSE_BOARD_AI_PASSPORT)) || CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796   /* CYD_SMALL_SESSION */\n#define CARDPUTER_CONTROL_SESSION 1", 1)
+    t = t.replace("#if SMALL_CONTROL_SESSION && CONFIG_MUSE_BOARD_AI_PASSPORT\n#define WS_RX_BUF_SIZE (SVC_FRAME_SCRATCH + 1024)",
+                  "#if (SMALL_CONTROL_SESSION && CONFIG_MUSE_BOARD_AI_PASSPORT) || CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796\n#define WS_RX_BUF_SIZE (SVC_FRAME_SCRATCH + 1024)", 1)
+    if "CYD_SMALL_SESSION" not in t: sys.exit("apply.py: noise_control anchors not found")
+    n.write_text(t); print("  patched main/noise_control.cpp (small control-session buffers on CYD boards)")
