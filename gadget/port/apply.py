@@ -190,3 +190,10 @@ if "musecorder_command" not in t:
     for needle in ("musecorder_on_tap", "musecorder_command(command", "musecorder_init();"):
         if needle not in t: sys.exit("apply.py: app.c anchor missing for " + needle)
     ap.write_text(t); print("  patched main/app.c (applet dispatch, BOOT tap, init)")
+
+# --- CYD: smaller animation stripes (the anim/image buffer is DMA memory the image fetcher also needs) ---
+ls = root / "main" / "led_status.c"; t = ls.read_text()
+if "CYD_STRIPE_CELLS" not in t:
+    t = t.replace("#define LCD_ANIM_STRIPE_CELLS 8\n", "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796   /* CYD_STRIPE_CELLS */\n#define LCD_ANIM_STRIPE_CELLS 4\n#else\n#define LCD_ANIM_STRIPE_CELLS 8\n#endif\n", 1)
+    if "CYD_STRIPE_CELLS" not in t: sys.exit("apply.py: stripe anchor not found")
+    ls.write_text(t); print("  patched main/led_status.c (4-cell animation stripes on CYD boards)")
