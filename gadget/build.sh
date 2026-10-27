@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Build Meta's Muse gadget firmware (facebookincubator/muse-gadget-sdk) for the Musecorder's CYD 2.4" board.
-#   gadget/build.sh            # clone SDK (once), apply the port, build -> gadget/sdk/esp32/build-$BOARD/muse-gadget.bin
+#   gadget/build.sh            # clone SDK (once), apply the port, build -> ~/esp/muse-gadget-sdk/esp32/build-$BOARD/muse-gadget.bin
 #   gadget/flash.sh [PORT]     # flash it (replaces the Musecorder firmware; tools/flash.sh cyd24c brings it back)
 # Needs ESP-IDF v6.0.1 (~/esp/esp-idf-v6, or IDF_PATH) and an SDK token in .env as MUSE_GADGET_SDK_TOKEN
 # (gadgets.muse.ai > Account > SDK tokens). Without a token the build warns; you can send it later over serial.
 set -euo pipefail
 BOARD="${BOARD:-cyd24}"   # cyd24 = 2.4" ILI9341 board, cyd40 = Hosyond 4" ST7796 board
 cd "$(dirname "$0")/.."
-REPO="$PWD"; SDK="$REPO/gadget/sdk"
+REPO="$PWD"
+# The SDK clone lives OUTSIDE the repo: ESP-IDF's response files break on paths with spaces (this repo sits in iCloud),
+# which silently drops the picolibc specs and fails with "unknown type name __FILE". Override with MUSE_GADGET_SDK_DIR.
+SDK="${MUSE_GADGET_SDK_DIR:-$HOME/esp/muse-gadget-sdk}"
+case "$SDK" in *" "*) echo "SDK dir must not contain spaces: $SDK"; exit 1;; esac
 [ -d "$SDK/esp32" ] || git clone --depth 1 https://github.com/facebookincubator/muse-gadget-sdk.git "$SDK"
 python3 "$REPO/gadget/port/apply.py" "$SDK/esp32"
 IDF="${IDF_PATH:-$HOME/esp/esp-idf-v6}"
@@ -24,4 +28,4 @@ else
 fi
 cd "$SDK/esp32"
 idf.py -B build-$BOARD -DIDF_TARGET=esp32 -DSDKCONFIG=build-$BOARD/sdkconfig -DSDKCONFIG_DEFAULTS="$DEFAULTS" build 2>&1 | tail -25
-echo; echo "built: $SDK/esp32/build-$BOARD/muse-gadget.bin"; echo "flash: gadget/flash.sh /dev/cu.usbserial-110"
+echo; echo "built: $SDK/esp32/build-$BOARD/muse-gadget.bin"; echo "flash: BOARD=$BOARD gadget/flash.sh /dev/cu.usbserial-110"

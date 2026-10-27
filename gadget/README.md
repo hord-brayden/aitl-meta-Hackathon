@@ -11,7 +11,7 @@ the pixel animation, images Muse sends, and the BOOT button to confirm pairing. 
 Because the device has one 4 MB flash, gadget mode and Musecorder mode are two images you swap in ~40 s:
 
 ```sh
-gadget/build.sh                       # once: clones the SDK into gadget/sdk (gitignored), applies gadget/port, builds
+gadget/build.sh                       # once: clones the SDK into ~/esp/muse-gadget-sdk (no spaces in the path!), applies gadget/port, builds
 gadget/flash.sh /dev/cu.usbserial-110 # -> gadget mode (status bars, pairs with the Muse app)
 tools/flash.sh cyd24c                 # -> back to Musecorder (applets, bridge, Muse Code)
 ```
