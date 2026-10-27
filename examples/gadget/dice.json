@@ -1,0 +1,4 @@
+{"id":"dice","name":"Dice","state":{"n":1,"rolls":0},"persist":["rolls"],
+ "screen":[{"big":"${n}"},{"text":"${rolls} rolls"},{"button":"Roll","event":"roll"}],
+ "on":{"roll":[{"set":{"n":"${random(1,6)}"}},{"inc":"rolls"},{"tone":{"freq":[523,659,784],"ms":50}}],
+       "boot:press":[{"set":{"n":"${random(1,6)}"}},{"inc":"rolls"}]}}

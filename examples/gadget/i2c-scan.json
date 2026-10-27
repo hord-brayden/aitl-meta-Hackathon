@@ -1,0 +1,3 @@
+{"id":"i2cscan","name":"I2C scan","i2c":{"sda":21,"scl":22},"state":{"found":"..."},
+ "screen":[{"text":"SDA 21  SCL 22"},{"text":"${found}"},{"button":"scan again","event":"scan"}],
+ "on":{"start":[{"i2c.scan":{"to":"found"}}],"scan":[{"i2c.scan":{"to":"found"}}]}}

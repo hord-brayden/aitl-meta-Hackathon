@@ -1,0 +1,5 @@
+{"id":"sensor","name":"Pin 35 meter","state":{"mv":0,"peak":0},
+ "screen":[{"text":"IO35 input"},{"big":"${v.mv}"},{"text":"mV  (peak ${peak})"},{"bar":"${v.mv}","max":3300},{"button":"reset peak","event":"reset"}],
+ "on":{"every:0.5":[{"adc.read":{"pin":35,"to":"v"}},{"if":"${v.mv > peak}","then":[{"set":{"peak":"${v.mv}"}}]}],
+       "reset":[{"set":{"peak":0}}],
+       "every:60":[{"muse.say":"IO35 reads ${v.mv} mV (peak ${peak})."}]}}

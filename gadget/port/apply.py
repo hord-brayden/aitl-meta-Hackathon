@@ -137,6 +137,8 @@ for name in ("musecorder.cpp", "musecorder.h"):
 cm = root / "main" / "CMakeLists.txt"; t = cm.read_text()
 if '"musecorder.cpp"' not in t:
     t = t.replace('    "app.c"\n', '    "app.c"\n    "musecorder.cpp"\n', 1); cm.write_text(t); print("  patched main/CMakeLists.txt (musecorder.cpp)")
+if "    esp_adc\n" not in t:
+    t = t.replace("    esp_driver_gpio\n", "    esp_driver_gpio\n    esp_adc\n", 1); cm.write_text(t); print("  patched main/CMakeLists.txt (esp_adc for adc.read)")
 kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
 if "HOMEHUB_MUSECORDER" not in t:
     t = t.replace("    config HOMEHUB_SENSECAP_SENSORS\n", (
@@ -157,19 +159,38 @@ if "MUSECORDER_INSTALL_DESC" not in t:
     reg = (
         "#if CONFIG_HOMEHUB_MUSECORDER\n"
         "    {\n"
-        "        cJSON *json_required = cJSON_CreateObject();\n"
-        "        cJSON_AddItemToObject(json_required, \"json\", string_param(\"The applet, as a JSON object or a JSON string.\"));\n"
-        "        add_command(commands, \"applet.install\", MUSECORDER_INSTALL_DESC, json_required, nullptr);\n"
-        "        add_command(commands, \"applet.remove\", MUSECORDER_REMOVE_DESC, nullptr, nullptr);\n"
+        "        cJSON *bool_param = nullptr;\n"
+        "        cJSON *install_optional = cJSON_CreateObject();\n"
+        "        cJSON_AddItemToObject(install_optional, \"json\", string_param(\"A new applet, as a JSON object or a JSON string (installs, stores and runs it).\"));\n"
+        "        cJSON_AddItemToObject(install_optional, \"id\", string_param(\"Without json: the id of a stored applet to start.\"));\n"
+        "        add_command(commands, \"applet.install\", MUSECORDER_INSTALL_DESC, nullptr, install_optional);\n"
+        "        cJSON *remove_optional = cJSON_CreateObject();\n"
+        "        cJSON_AddItemToObject(remove_optional, \"id\", string_param(\"Delete this stored applet instead of just stopping the running one.\"));\n"
+        "        bool_param = cJSON_CreateObject(); cJSON_AddStringToObject(bool_param, \"type\", \"boolean\"); cJSON_AddStringToObject(bool_param, \"description\", \"Delete every stored applet.\");\n"
+        "        cJSON_AddItemToObject(remove_optional, \"all\", bool_param);\n"
+        "        add_command(commands, \"applet.remove\", MUSECORDER_REMOVE_DESC, nullptr, remove_optional);\n"
         "        cJSON *set_optional = cJSON_CreateObject();\n"
         "        cJSON *set_param = cJSON_CreateObject();\n"
         "        cJSON_AddStringToObject(set_param, \"type\", \"object\");\n"
         "        cJSON_AddStringToObject(set_param, \"description\", \"State keys to assign before reading, e.g. {\\\"count\\\": 0}.\");\n"
         "        cJSON_AddItemToObject(set_optional, \"set\", set_param);\n"
+        "        bool_param = cJSON_CreateObject(); cJSON_AddStringToObject(bool_param, \"type\", \"boolean\"); cJSON_AddStringToObject(bool_param, \"description\", \"Run the 3-tap touch calibration on the screen.\");\n"
+        "        cJSON_AddItemToObject(set_optional, \"calibrate\", bool_param);\n"
         "        add_command(commands, \"applet.state\", MUSECORDER_STATE_DESC, nullptr, set_optional);\n"
         "        cJSON *name_required = cJSON_CreateObject();\n"
         "        cJSON_AddItemToObject(name_required, \"name\", string_param(\"The event name (a key under the applet's on object).\"));\n"
         "        add_command(commands, \"applet.event\", MUSECORDER_EVENT_DESC, name_required, nullptr);\n"
+        "        cJSON *wifi_required = cJSON_CreateObject();\n"
+        "        cJSON_AddItemToObject(wifi_required, \"ssid\", string_param(\"Network name.\"));\n"
+        "        cJSON_AddItemToObject(wifi_required, \"password\", string_param(\"Network password (empty for an open network).\"));\n"
+        "        cJSON *wifi_optional = cJSON_CreateObject();\n"
+        "        bool_param = cJSON_CreateObject(); cJSON_AddStringToObject(bool_param, \"type\", \"boolean\"); cJSON_AddStringToObject(bool_param, \"description\", \"The network does not broadcast its name.\");\n"
+        "        cJSON_AddItemToObject(wifi_optional, \"hidden\", bool_param);\n"
+        "        add_command(commands, \"wifi.add\", MUSECORDER_WIFI_ADD_DESC, wifi_required, wifi_optional);\n"
+        "        cJSON *forget_required = cJSON_CreateObject();\n"
+        "        cJSON_AddItemToObject(forget_required, \"ssid\", string_param(\"Network name.\"));\n"
+        "        add_command(commands, \"wifi.forget\", MUSECORDER_WIFI_FORGET_DESC, forget_required, nullptr);\n"
+        "        add_command(commands, \"wifi.list\", MUSECORDER_WIFI_LIST_DESC, nullptr, nullptr);\n"
         "    }\n"
         "#endif\n"
         "#if CONFIG_HOMEHUB_VOICE\n")
@@ -218,3 +239,22 @@ if "musecorder_screen_reset" not in t:
                   "    if (strcmp(command, \"display.show_animation\") == 0) {\n        led_status_show_animation();\n#if CONFIG_HOMEHUB_MUSECORDER\n        musecorder_screen_reset();\n#endif\n", 1)
     if "musecorder_screen_reset" not in t: sys.exit("apply.py: show_animation anchor not found")
     ap2.write_text(t); print("  patched main/app.c (applet repaints after show_animation)")
+
+# --- CYD 4": MISO on the LCD bus so the XPT2046 touch chip (same bus, CS 33) can answer ---
+lm = root / "main" / "led_status.c"; t = lm.read_text()
+if "CYD_TOUCH_MISO" not in t:
+    t = t.replace("        .miso_io_num = -1,\n        .quadwp_io_num = -1,\n        .quadhd_io_num = -1,\n        .max_transfer_sz = LCD_ANIM_BUF_PIXELS * sizeof(uint16_t),",
+                  "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796   /* CYD_TOUCH_MISO */\n        .miso_io_num = 12,   // the XPT2046 touch controller shares this bus\n#else\n        .miso_io_num = -1,\n#endif\n        .quadwp_io_num = -1,\n        .quadhd_io_num = -1,\n        .max_transfer_sz = LCD_ANIM_BUF_PIXELS * sizeof(uint16_t),", 1)
+    if "CYD_TOUCH_MISO" not in t: sys.exit("apply.py: LCD bus MISO anchor not found")
+    lm.write_text(t); print("  patched main/led_status.c (MISO 12 on the 4-inch board for touch)")
+
+# --- CYD: serial ">wifi=" console command (store extra networks without re-pairing) ---
+sc = root / "main" / "sdk_token_console.c"; t = sc.read_text()
+if "musecorder_console_command" not in t:
+    t = t.replace('#include "identity.h"\n', '#include "identity.h"\n#if CONFIG_HOMEHUB_MUSECORDER\n#include "musecorder.h"\n#endif\n', 1)
+    t = t.replace("    if (!r->overflow && r->buf[0] == '>') sdk_token_console_command(r->buf + 1);\n",
+                  "    if (!r->overflow && r->buf[0] == '>') {\n        bool handled = sdk_token_console_command(r->buf + 1);\n#if CONFIG_HOMEHUB_MUSECORDER\n        if (!handled) handled = musecorder_console_command(r->buf + 1);\n#endif\n        (void)handled;\n    }\n", 1)
+    t = t.replace('xTaskCreate(uart_task, "sdk_token_uart", 3072,', 'xTaskCreate(uart_task, "sdk_token_uart", 4096,', 1)
+    t = t.replace("#define COMMAND_LINE_MAX 96\n", "#define COMMAND_LINE_MAX 160\n", 1)
+    if "musecorder_console_command" not in t: sys.exit("apply.py: console anchor not found")
+    sc.write_text(t); print("  patched main/sdk_token_console.c (>wifi= command)")

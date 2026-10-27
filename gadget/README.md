@@ -28,6 +28,19 @@ Flash, watch the serial monitor for `link.main: Muse Gadget starting`. The bars 
 add a device; pick `MuseGadget-CYD-XXXXXX`; pick your Wi-Fi. When the bars breathe blue, press **BOOT** on the board.
 Green = connected to your Muse. Hold BOOT 5 s to unpair.
 
+## Several Wi-Fi networks (home, office, the venue)
+
+Meta's firmware remembers up to eight networks and joins whichever is nearby, but the app only teaches it one, during
+setup. The port adds two ways to add more without re-pairing:
+
+- **From the phone, once online:** tell your Muse "remember my office Wi-Fi", it calls `wifi.add` (`wifi.list`,
+  `wifi.forget` exist too). The password goes over the encrypted session and is stored on the device only.
+- **Over USB, when the device is somewhere it knows no network:** put `GADGET_WIFI_SSID=` and `GADGET_WIFI_PASS=`
+  in the repo's gitignored `.env`, run `gadget/wifi.py`; the board stores the network, restarts and joins.
+  `gadget/wifi.py --list` shows the names it knows.
+
+A 5 s BOOT hold still erases everything and re-enters pairing, even while an applet runs.
+
 ## What the port changes (`gadget/port/apply.py`)
 - `devices/sdkconfig.cyd24`: classic ESP32, 4 MB DIO, no PSRAM, BLE-only controller, tunnel off, BOOT on GPIO0,
   BLE name suffix `-CYD`, custom 4 MB partition table (`partitions_cyd24_4mb.csv`: single factory app).
@@ -36,39 +49,49 @@ Green = connected to your Muse. Hold BOOT 5 s to unpair.
   `idf_component.yml`.
 If the bars show blue where orange is expected, flip `LCD_RGB_ELEMENT_ORDER_BGR` to `RGB` in `apply.py` and rebuild.
 
-## Next step after pairing works
-Register device commands (`link.register` in `main/app.c`, see the SDK's `AGENTS.md` "Adding a command") so your
-Muse can call `applet.install` straight from the phone, and merge the Musecorder applet engine into this image.
-
 ## Applets over Meta's channel (phone only, no Mac)
 
-The port adds a Musecorder applet runtime to Meta's firmware (`gadget/port/musecorder/`, built in as
-`CONFIG_HOMEHUB_MUSECORDER`). Once the gadget is paired and online, your Muse sees four extra commands and the
-format in their descriptions:
+The port builds a Musecorder applet runtime into Meta's firmware (`gadget/port/musecorder/`, `CONFIG_HOMEHUB_MUSECORDER`).
+Once the gadget is paired and online, your Muse sees four extra commands; the full applet format rides in the
+description of `applet.install` (`musecorder.h`), so Muse needs no other docs:
 
 | command | what it does |
 |---|---|
-| `applet.install` (json) | store and start a JSON tool: state, `screen` lines on the status display, `on` handlers (`start`, `boot:press`, `every:N`, `gpio:PIN:rise|fall|change`, custom names), actions (`set`, `inc`, `dec`, `toggle`, `log`, `led`, `gpio.write`, `gpio.read`, `vm.write`, `http`, `if`, `exit`) |
-| `applet.remove` | stop it and bring the avatar back |
-| `applet.state` (set?) | read state and the log, optionally assign keys first |
+| `applet.install` (json \| id) | store and start a JSON tool (under 4 KB, five stored); `id` alone restarts a stored one |
+| `applet.remove` (id? all?) | stop the running applet (it stays stored); `id` deletes one; `all` wipes the store |
+| `applet.state` (set? calibrate?) | state, log, stored ids, free RAM; assign keys first; `calibrate` runs the touch setup |
 | `applet.event` (name) | fire a custom event |
 
-Say to your Muse: "Install an applet on my gadget that counts BOOT presses, shows the count big, and appends the
-count to musecorder/tally.log on your VM every minute" and it writes the JSON itself. `vm.write` lands in your
-Muse's own files, so it can read the results back without any third-party service. The applet survives reboots
-(NVS) and a bad applet cannot brick the board: `applet.remove`, or a 5 s BOOT hold to re-pair, always works.
+An applet: `screen` rows (`text`, `big`, `bar{max}`, `gap`, `button{event,color}`, `buttons[{label,event}]`,
+`canvas`), `on` handlers (`start`, `stop`, `boot:press`, `touch`, `touch:move`, `every:SECONDS`,
+`gpio:PIN:rise|fall|change`, custom names) and actions: `set inc dec toggle log if exit`, `led`, `tone` (speaker,
+one note or a sequence), `pwm`, `gpio.read/write`, `adc.read`, `i2c.scan/read/write` (bus pins from the applet's
+`i2c{sda,scl}`), `draw.rect`, `draw.text`, `clear`, `http`, `muse.say`, `muse.ask`, `vm.write`. `${expr}` templates
+evaluate against `state` (math, comparisons, `len int round pad clock hhmmss random uptime`). Examples to paste
+into the chat: [`../examples/gadget/`](../examples/gadget/).
 
-Memory on the classic ESP32: Meta's session plus TLS leaves ~30 KB free, so the runtime keeps every buffer small
-and a second TLS connection (`http` to https://, `display.draw_url` with https://) fails for lack of a 17 KB
-contiguous block. Plain HTTP works: `display.draw_url` with an `http://` image on your LAN (a 160 px JPEG drew in
-320 ms). Boards with PSRAM (Freenove FNK0104B, Guition JC3248W535, Waveshare LCD-7) have none of these limits.
+**Touch.** The 4" board's XPT2046 sits on the LCD's SPI bus (CS 33, pen IRQ 36); the 2.4" board's CST820 is on
+I²C (33/32). Tap the applet's title (or the idle status screen) for the **launcher**: the stored applets, "Status
+screen", "Touch setup" (three taps calibrate axis order, direction and scale; stored in the applet partition).
 
-Credential scope: the VM answered `403 route not allowed for this credential's scopes` to `POST /fs/write` and
+**Storage.** Applets, their persisted state and the touch calibration live in their own NVS partition `applets`
+(`partitions_cyd24_4mb.csv`, 128 KB at the end of flash), never in Meta's `nvs` with the pairing data. Flashing a
+build with this table over the old one keeps the pairing; the runtime moves an applet from the old location on
+first boot.
+
+**Talking back.** `muse.say` posts a message into your chat with your Muse (the chat route Meta's own boards use), so
+"door count hit 50" shows up in the app and Muse can act on it. `muse.ask` additionally reads the reply back onto
+the screen on boards with PSRAM; on the classic ESP32 the 16 KB reply frames do not fit, so it posts only.
+
+**Memory on the classic ESP32.** Meta's session plus TLS leaves ~60 KB free with an applet running, so the runtime
+keeps every buffer small; a second TLS connection (`http` to https://, `display.draw_url` with https://) fails for
+lack of a 17 KB contiguous block. Plain HTTP works: `display.draw_url` with an `http://` image on your LAN (a 160 px
+JPEG drew in 320 ms). Boards with PSRAM (Freenove FNK0104B, Guition JC3248W535, Waveshare LCD-7) have none of these
+limits.
+
+**Credential scope.** The VM answered `403 route not allowed for this credential's scopes` to `POST /fs/write` and
 `GET /identity` for this community-paired device (nothing in the firmware or the SDK token sets scopes), so
-`vm.write` is blocked for now. Muse pulls results with `applet.state`; and the device pushes with `muse.say`:
-the applet posts a message into your chat with your Muse (the chat route Meta's own boards use), so "door count hit
-50" shows up in the app and your Muse can act on it. `muse.ask` additionally reads the reply back onto the screen on
-boards with PSRAM; on the classic ESP32 the 16 KB reply frames do not fit, so it posts only.
+`vm.write` is blocked for now; Muse pulls results with `applet.state` and the device pushes with `muse.say`.
 
-Your Muse as the status sprite: `gadget/port/gen_avatar_anim.py` turns a GIF into Meta's cell-sprite format;
+**Your Muse as the status sprite.** `gadget/port/gen_avatar_anim.py` turns a GIF into Meta's cell-sprite format;
 `apply.py` installs the result.

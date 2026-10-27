@@ -1,0 +1,7 @@
+{"id":"sketch","name":"Sketch","state":{"c":"#2ee6d6","sz":8},
+ "screen":[{"buttons":[{"label":"cyan","event":"cyan","color":"#1d6b66"},{"label":"pink","event":"pink","color":"#7a2f8e"},{"label":"wipe","event":"wipe"}]},{"canvas":true}],
+ "on":{"touch:move":[{"draw.rect":{"x":"${touch.x - sz / 2}","y":"${touch.y - sz / 2}","w":"${sz}","h":"${sz}","color":"${c}"}}],
+       "touch":[{"draw.rect":{"x":"${touch.x - sz / 2}","y":"${touch.y - sz / 2}","w":"${sz}","h":"${sz}","color":"${c}"}}],
+       "cyan":[{"set":{"c":"#2ee6d6"}}],"pink":[{"set":{"c":"#e879f9"}}],
+       "wipe":[{"clear":true},{"draw.text":{"y":440,"text":"draw with a finger","scale":1,"color":"#9aa3b5"}}],
+       "start":[{"draw.text":{"y":440,"text":"draw with a finger","scale":1,"color":"#9aa3b5"}}]}}

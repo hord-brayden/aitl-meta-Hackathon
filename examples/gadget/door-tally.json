@@ -1,0 +1,10 @@
+{"id":"tally","name":"Door Tally","state":{"n":0,"goal":100},"persist":["n"],
+ "screen":[{"text":"Door A"},{"big":"${n}"},{"bar":"${n}","max":"${goal}"},
+           {"buttons":[{"label":"+1","event":"up"},{"label":"-1","event":"down"},{"label":"0","event":"zero","color":"#5a2f2f"}]},
+           {"button":"Post to Muse","event":"post","color":"#7a2f8e"}],
+ "on":{"up":[{"inc":"n"},{"tone":{"freq":880,"ms":40}},{"if":"${n % 10 == 0}","then":[{"tone":{"freq":[660,880,1320],"ms":70}},{"led":"#00ff00"}]}],
+       "down":[{"if":"${n > 0}","then":[{"dec":"n"}]}],
+       "zero":[{"set":{"n":0}}],
+       "boot:press":[{"inc":"n"}],
+       "post":[{"muse.say":"Door A tally is ${n} (${hhmmss(uptime())} since boot). Log it."}],
+       "every:300":[{"muse.say":"Door A: ${n} people so far."}]}}
