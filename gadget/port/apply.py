@@ -95,5 +95,5 @@ if MARK not in c.read_text():
 
 y = root / "main" / "idf_component.yml"
 if "esp_lcd_ili9341" not in y.read_text():
-    edit(y, [('  espressif/led_strip: "~3.0"\n', '  espressif/led_strip: "~3.0"\n  espressif/esp_lcd_ili9341: "^1"\n  espressif/esp_lcd_st7796: "^1"\n')])
+    edit(y, [('  espressif/led_strip: "~3.0"\n', '  espressif/led_strip: "~3.0"\n  espressif/esp_lcd_ili9341: "^2"\n  espressif/esp_lcd_st7796: "^1"\n')])
 print("port applied")
