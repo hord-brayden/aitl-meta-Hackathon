@@ -1140,7 +1140,7 @@ extern "C" bool musecorder_console_command(const char *line) {
         const char *arg = line + 6;
         if (!strcmp(arg, "cal")) { if (!s_touch_ok) { printf("@touch no touch device\n"); return true; } xSemaphoreTake(s_lock, portMAX_DELAY); wizStart(); xSemaphoreGive(s_lock); printf("@touch calibration on screen\n"); fflush(stdout); return true; }
         printf("@touch ok=%d errors=%u ticks=%u cal=%d\n", s_touch_ok, (unsigned)s_touch_err, (unsigned)s_ticks, s_cal.valid);
-        i2cProbePins(33, 32); i2cProbePins(21, 22); i2cProbePins(27, 22);
+        i2cProbePins(33, 32); i2cProbePins(21, 22);   // never 27: the backlight
         // Capacitive controllers (GT911, FT6x36, CST8xx) stay silent while their reset pin is low: raise the usual ones and look again.
         for (int rst : {25, 4, 16}) { gpio_reset_pin((gpio_num_t)rst); gpio_set_direction((gpio_num_t)rst, GPIO_MODE_OUTPUT); gpio_set_level((gpio_num_t)rst, 0); }
         vTaskDelay(pdMS_TO_TICKS(20));
@@ -1170,7 +1170,7 @@ extern "C" bool musecorder_console_command(const char *line) {
         }
         // Candidate C: an XPT2046 on the LCD bus behind another chip-select pin.
         printf("@touch C: other CS pins on the LCD bus (keep pressing)\n"); fflush(stdout);
-        for (int cs : {21, 22, 26, 17, 16, 4, 32, 25}) {
+        for (int cs : {21, 22, 26, 32, 25}) {   // not 4/16/17 (amp enable, LEDs) and never 27 (backlight)
             spi_device_interface_config_t dc = {}; dc.clock_speed_hz = 1000000; dc.mode = 0; dc.spics_io_num = cs; dc.queue_size = 1; spi_device_handle_t d = nullptr;
             if (spi_bus_add_device(SPI2_HOST, &dc, &d) != ESP_OK) { printf("@touch C cs=%d: add failed\n", cs); continue; }
             int xs[3], ys[3], zs[3];
