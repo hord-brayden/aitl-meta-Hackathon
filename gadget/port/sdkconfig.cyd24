@@ -45,3 +45,6 @@ CONFIG_ESP_WIFI_RX_IRAM_OPT=n
 
 # No PSRAM: the home-network tunnel does not fit next to the control session.
 CONFIG_HOMEHUB_TUNNEL=n
+
+# Diagnostics: NimBLE host at debug so pairing attempts show every ATT/GAP step on the console.
+CONFIG_BT_NIMBLE_LOG_LEVEL_DEBUG=y

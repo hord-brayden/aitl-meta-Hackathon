@@ -97,3 +97,13 @@ y = root / "main" / "idf_component.yml"
 if "esp_lcd_ili9341" not in y.read_text():
     edit(y, [('  espressif/led_strip: "~3.0"\n', '  espressif/led_strip: "~3.0"\n  espressif/esp_lcd_ili9341: "^2"\n  espressif/esp_lcd_st7796: "^1"\n')])
 print("port applied")
+
+# --- CYD: random static BLE address (phones cache the GATT table per address; this radio was a BLE keyboard under Musecorder) ---
+b = root / "main" / "ble_server.c"
+t = b.read_text()
+if "CYD_RANDOM_ADDR" not in t:
+    t = t.replace("    rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,",
+                  "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796   /* CYD_RANDOM_ADDR */\n    rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, NULL, BLE_HS_FOREVER,\n#else\n    rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,\n#endif", 1)
+    t = t.replace("    s_synced = true;\n    start_advertising();",
+                  "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796\n    { ble_addr_t ra; if (ble_hs_id_gen_rnd(1, &ra) == 0 && ble_hs_id_set_rnd(ra.val) == 0) ESP_LOGI(TAG, \"random static addr %02x:%02x:%02x:%02x:%02x:%02x\", ra.val[5], ra.val[4], ra.val[3], ra.val[2], ra.val[1], ra.val[0]); else ESP_LOGW(TAG, \"random addr failed; using public\"); }\n#endif\n    s_synced = true;\n    start_advertising();", 1)
+    b.write_text(t); print("  patched main/ble_server.c (random static address on CYD boards)")
