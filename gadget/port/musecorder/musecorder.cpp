@@ -41,6 +41,7 @@ void app_touch_short_press(void);   // app.c: the BOOT tap (confirms pairing) an
 void app_touch_long_press(void);
 }
 #include "esp_system.h"
+#include "esp_sleep.h"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -905,6 +906,35 @@ static bool startStored(const std::string &id, bool fresh) {
     return startApplet(doc, fresh);
 }
 
+
+// ---------------------------------------------------------------- settings: backlight, screen-off, sleep (deep sleep, touch wakes)
+#define MC_PIN_BL 27
+static int s_bright = 100, s_off_min = 0;   // persisted in the applet partition as "cfg"
+static bool s_bl_ready = false, s_dim = false, s_swallow = false; static int64_t s_last_touch_us = 0;
+static int s_menu = 0;   // 0 launcher, 1 settings
+static void blApply(int percent) {
+    if (!s_bl_ready) {
+        ledc_timer_config_t tc = {}; tc.speed_mode = LEDC_LOW_SPEED_MODE; tc.timer_num = LEDC_TIMER_1; tc.duty_resolution = LEDC_TIMER_8_BIT; tc.freq_hz = 5000; tc.clk_cfg = LEDC_AUTO_CLK;
+        if (ledc_timer_config(&tc) != ESP_OK) return;
+        ledc_channel_config_t cc = {}; cc.gpio_num = MC_PIN_BL; cc.speed_mode = LEDC_LOW_SPEED_MODE; cc.channel = LEDC_CHANNEL_4; cc.timer_sel = LEDC_TIMER_1; cc.duty = 255; cc.hpoint = 0;
+        if (ledc_channel_config(&cc) != ESP_OK) return;
+        s_bl_ready = true;
+    }
+    int d = percent <= 0 ? 0 : percent >= 100 ? 255 : 8 + percent * 247 / 100;
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_4, d); ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_4);
+}
+static void cfgLoad() { char *t = storeGet("cfg", 32); if (t) { int b, o; if (sscanf(t, "%d %d", &b, &o) == 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; } free(t); } }
+static void cfgSave() { char b[32]; snprintf(b, sizeof b, "%d %d", s_bright, s_off_min); storeSet("cfg", b); }
+static void screenWake() { if (s_dim) { s_dim = false; blApply(s_bright); } s_last_touch_us = esp_timer_get_time(); }
+static void goToSleep() {   // deep sleep: ~nothing drawn, touch (pen IRQ low) wakes into a fresh boot; pairing and applets survive
+    ESP_LOGI(TAG, "sleep: touch the screen to wake");
+    clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 20, "sleeping", 3, C_MUTED); drawText(s_screen_h / 2 + 16, "touch to wake", 2, C_MUTED);
+    vTaskDelay(pdMS_TO_TICKS(1200));
+    blApply(0);
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, 0);
+    esp_deep_sleep_start();
+}
+
 // ---------------------------------------------------------------- launcher (tap the title, or the idle screen)
 static int64_t s_repair_until = 0;
 static void launcherDraw() {
@@ -920,22 +950,42 @@ static void launcherDraw() {
     if (ids.empty()) { drawText(y + 8, "no applets yet", 2, C_MUTED); drawText(y + 32, "ask your Muse to install one", 2, C_MUTED); y += 64; }
     y = s_screen_h - TOP_CLEAR - 2 * (BTN_H + 8);
     drawButton(12, y, s_screen_w - 24, s_running ? "Stop: status screen" : "Status screen", C_BTN_HOT); s_hits.push_back({12, y, s_screen_w - 24, BTN_H, "status"}); y += BTN_H + 8;
-    int third = (s_screen_w - 24 - 16) / 3;
-    drawButton(12, y, third, "Back", C_BTN); s_hits.push_back({12, y, third, BTN_H, "back"});
-    drawButton(12 + third + 8, y, third, "Touch", C_BTN); s_hits.push_back({12 + third + 8, y, third, BTN_H, "calibrate"});
+    int half = (s_screen_w - 24 - 8) / 2;
+    drawButton(12, y, half, "Back", C_BTN); s_hits.push_back({12, y, half, BTN_H, "back"});
+    drawButton(12 + half + 8, y, half, "Settings", C_BTN); s_hits.push_back({12 + half + 8, y, half, BTN_H, "settings"});
+    s_menu = 0;
+}
+static void settingsDraw() {
+    s_hits.clear(); s_menu = 1; clearRows(0, s_screen_h);
+    int y = TOP_CLEAR + 8; drawText(y, "Settings", 3, C_MUTED); y += 8 * 3 + 12;
+    int w = s_screen_w - 24, half = (w - 8) / 2; char b[32];
+    snprintf(b, sizeof b, "Brightness %d%%", s_bright); drawButton(12, y, w, b, C_BTN); s_hits.push_back({12, y, w, BTN_H, "bright"}); y += BTN_H + 8;
+    snprintf(b, sizeof b, "Screen off: %s", s_off_min == 0 ? "never" : s_off_min == 2 ? "2 min" : s_off_min == 10 ? "10 min" : "30 min"); drawButton(12, y, w, b, C_BTN); s_hits.push_back({12, y, w, BTN_H, "off"}); y += BTN_H + 8;
+    drawButton(12, y, half, "Reboot", C_BTN); s_hits.push_back({12, y, half, BTN_H, "reboot"});
+    drawButton(12 + half + 8, y, half, "Sleep", C_BTN); s_hits.push_back({12 + half + 8, y, half, BTN_H, "sleep"}); y += BTN_H + 8;
     bool arming = s_repair_until > esp_timer_get_time();
-    drawButton(12 + 2 * (third + 8), y, third, arming ? "SURE?" : "Re-pair", arming ? C_BTN_HOT : C_BTN); s_hits.push_back({12 + 2 * (third + 8), y, third, BTN_H, "repair"});
-    if (arming) drawText(y - 24, "tap SURE? to erase pairing", 2, C_BAR);
+    drawButton(12, y, half, "Touch setup", C_BTN); s_hits.push_back({12, y, half, BTN_H, "calibrate"});
+    drawButton(12 + half + 8, y, half, arming ? "SURE?" : "Re-pair", arming ? C_BTN_HOT : C_BTN); s_hits.push_back({12 + half + 8, y, half, BTN_H, "repair"}); y += BTN_H + 8;
+    if (arming) { drawText(y, "tap SURE? to erase pairing", 2, C_BAR); y += 24; }
+    snprintf(b, sizeof b, "free %u KB  %s", (unsigned)(esp_get_free_heap_size() / 1024), s_vm_up ? "Muse linked" : "Muse offline"); drawText(y + 4, b, 2, C_MUTED);
+    y = s_screen_h - TOP_CLEAR - (BTN_H + 8);
+    drawButton(12, y, w, "Back", C_BTN); s_hits.push_back({12, y, w, BTN_H, "launcher"});
 }
 static void launcherOpen() { s_launcher = true; s_repair_until = 0; launcherDraw(); ESP_LOGI(TAG, "launcher open"); }
 static void launcherClose() { s_launcher = false; s_hits.clear(); s_cleared = false; if (s_running) s_dirty_screen = true; else led_status_show_animation(); }
 static void launcherTap(const std::string &ev) {
     ESP_LOGI(TAG, "launcher: %s", ev.c_str());
     if (ev == "back") launcherClose();
+    else if (ev == "settings") settingsDraw();
+    else if (ev == "launcher") launcherDraw();
+    else if (ev == "bright") { s_bright = s_bright > 60 ? 60 : s_bright > 30 ? 30 : s_bright > 10 ? 10 : 100; blApply(s_bright); cfgSave(); settingsDraw(); }
+    else if (ev == "off") { s_off_min = s_off_min == 0 ? 2 : s_off_min == 2 ? 10 : s_off_min == 10 ? 30 : 0; cfgSave(); settingsDraw(); }
+    else if (ev == "reboot") { clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rebooting", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(300)); esp_restart(); }
+    else if (ev == "sleep") goToSleep();
     else if (ev == "calibrate") wizStart();
     else if (ev == "repair") {   // two taps within 8 s: the same as holding BOOT for 5 s (erase pairing, reboot into setup)
         if (s_repair_until > esp_timer_get_time()) { s_repair_until = 0; drawText(s_screen_h / 2, "erasing pairing...", 2, C_TEXT); app_touch_long_press(); }
-        else { s_repair_until = esp_timer_get_time() + 8000000; launcherDraw(); }
+        else { s_repair_until = esp_timer_get_time() + 8000000; settingsDraw(); }
     }
     else if (ev == "status") { if (s_running) { storeSet("run", nullptr); stopApplet(false); } launcherClose(); }
     else if (!ev.compare(0, 4, "run:")) { std::string id = ev.substr(4); s_launcher = false; s_hits.clear(); if (!(s_running && id == s_app_id)) { if (!startStored(id, false)) { logf("launch %s failed", id.c_str()); launcherClose(); } } else launcherClose(); }
@@ -953,6 +1003,9 @@ static void onTap(int x, int y) {
 static void touchTick() {
     if (!s_touch_ok || esp_timer_get_time() < 2000000) return;   // the pen IRQ reads low briefly after power-up: ignore the first 2 s
     int x = 0, y = 0; bool p = touchRead(&x, &y);
+    if (s_off_min > 0 && !s_dim && esp_timer_get_time() - s_last_touch_us > (int64_t)s_off_min * 60000000LL) { s_dim = true; blApply(0); }
+    if (p) { if (s_dim) { screenWake(); s_swallow = true; } else s_last_touch_us = esp_timer_get_time(); }
+    if (s_swallow) { if (!p) s_swallow = false; return; }   // the touch that woke the screen is not a tap
     if (s_wiz >= 0) { if (s_wiz_wait_up) { if (!p) s_wiz_wait_up = false; return; } if (p) { s_down = true; s_up_n = 0; } else if (s_down) { if (++s_up_n < 3) return; s_down = false; ESP_LOGI(TAG, "touch setup sample %d: raw %d,%d", s_wiz + 1, s_raw_x, s_raw_y); wizSample(); } return; }
     if (p) {
         s_up_n = 0;
@@ -1012,6 +1065,7 @@ extern "C" void musecorder_init(void) {
     storeInit();
     s_touch_ok = s_screen_w > 0 && touchInit();
     if (s_touch_ok) calLoad();
+    cfgLoad(); if (s_bright < 100) blApply(s_bright); s_last_touch_us = esp_timer_get_time();
     button_set_press_cb(pressCb);
     xTaskCreate(tickTask, "musecorder", 4096, nullptr, 3, nullptr);
     ESP_LOGI(TAG, "ready (%dx%d, touch %s, store %s)", s_screen_w, s_screen_h, s_touch_ok ? "yes" : "no", s_store_ok ? "ok" : "none");
