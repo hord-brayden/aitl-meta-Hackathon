@@ -427,6 +427,7 @@ extern "C" void musecorder_init(void) {
     ESP_LOGI(TAG, "ready (%dx%d)", s_screen_w, s_screen_h);
 }
 extern "C" void musecorder_vm_connected(void) { s_vm_up = true; }
+extern "C" void musecorder_screen_reset(void) { s_cleared = false; s_dirty_screen = true; }
 static bool pressCb(bool pressed) {
     if (!s_running) return false;
     if (pressed) s_tap_pending = true;

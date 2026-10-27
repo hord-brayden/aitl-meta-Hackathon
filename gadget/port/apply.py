@@ -210,3 +210,11 @@ bt = root / "main" / "button.c"; t = bt.read_text()
 if "CONFIG_HOMEHUB_MUSECORDER" not in t:
     t = t.replace("#if CONFIG_HOMEHUB_VOICE\n", "#if CONFIG_HOMEHUB_VOICE || CONFIG_HOMEHUB_MUSECORDER\n")
     bt.write_text(t); print("  patched main/button.c (press hook available to the applet runtime)")
+
+# --- CYD: applet repaint after display.show_animation ---
+ap2 = root / "main" / "app.c"; t = ap2.read_text()
+if "musecorder_screen_reset" not in t:
+    t = t.replace("    if (strcmp(command, \"display.show_animation\") == 0) {\n        led_status_show_animation();\n",
+                  "    if (strcmp(command, \"display.show_animation\") == 0) {\n        led_status_show_animation();\n#if CONFIG_HOMEHUB_MUSECORDER\n        musecorder_screen_reset();\n#endif\n", 1)
+    if "musecorder_screen_reset" not in t: sys.exit("apply.py: show_animation anchor not found")
+    ap2.write_text(t); print("  patched main/app.c (applet repaints after show_animation)")

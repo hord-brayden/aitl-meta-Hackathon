@@ -15,15 +15,16 @@ void musecorder_init(void);                                  // after led_status
 bool musecorder_on_tap(void);                                // BOOT tap: true when a running applet consumed it
 cJSON *musecorder_command(const char *command, cJSON *params);   // applet.* commands; NULL if not ours
 void musecorder_vm_connected(void);                          // control session is up (vm.write may be used)
+void musecorder_screen_reset(void);                          // the status screen was taken back (display.show_animation): repaint the applet
 
 // Command descriptions advertised to Muse in link.register (keep the total under 8 KB).
 #define MUSECORDER_INSTALL_DESC \
     "Install and run a small JSON tool (applet) on this gadget; json = the applet object. Example: " \
     "{\"id\":\"tally\",\"name\":\"Door Tally\",\"state\":{\"n\":0},\"persist\":[\"n\"]," \
     "\"screen\":[{\"text\":\"Door A\"},{\"big\":\"${n}\"},{\"bar\":\"${n}\",\"max\":100}]," \
-    "\"on\":{\"boot:press\":[{\"inc\":\"n\"}],\"every:300\":[{\"vm.write\":{\"path\":\"musecorder/tally.log\",\"text\":\"${n}\\n\",\"append\":true}}]}}. " \
+    "\"on\":{\"boot:press\":[{\"inc\":\"n\"}],\"every:300\":[{\"log\":\"minute ${n}\"}]}}. " \
     "Events: start, boot:press, every:SECONDS, gpio:PIN:rise|fall|change (pins 4 16 17 21 22 25 26 32 34-39), custom names via applet.event. " \
-    "Actions: set{k:v}, inc/dec/toggle k, log, led #rrggbb, gpio.write{pin,value}, gpio.read{pin,to}, vm.write{path,text,append} (file on this VM), " \
+    "Actions: set{k:v}, inc/dec/toggle k, log, led #rrggbb, gpio.write{pin,value}, gpio.read{pin,to}, vm.write{path,text,append} (file on this VM; refused if the credential lacks the scope: read state with applet.state instead), " \
     "http{method,url,json,to} (may fail: little RAM), if{if,then,else}, exit. ${expr}: state keys, math, comparisons, len int round pad clock hhmmss random. Under 4 KB."
 #define MUSECORDER_REMOVE_DESC "Stop and delete the running applet and bring back the status screen."
 #define MUSECORDER_STATE_DESC \
