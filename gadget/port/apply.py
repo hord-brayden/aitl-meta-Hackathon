@@ -258,3 +258,11 @@ if "musecorder_console_command" not in t:
     t = t.replace("#define COMMAND_LINE_MAX 96\n", "#define COMMAND_LINE_MAX 160\n", 1)
     if "musecorder_console_command" not in t: sys.exit("apply.py: console anchor not found")
     sc.write_text(t); print("  patched main/sdk_token_console.c (>wifi= command)")
+
+# --- CYD: BOOT button actions from the touchscreen (the button is recessed in a case) ---
+ap3 = root / "main" / "app.c"; t = ap3.read_text()
+if "app_touch_short_press" not in t:
+    t = t.replace('static void on_button_long_press(void) {\n    reset_setup_from_control("button long-press");\n}\n',
+                  'static void on_button_long_press(void) {\n    reset_setup_from_control("button long-press");\n}\n#if CONFIG_HOMEHUB_MUSECORDER\nvoid app_touch_short_press(void) { on_button_short_press(); }   // touchscreen stand-ins for the BOOT button\nvoid app_touch_long_press(void) { on_button_long_press(); }\n#endif\n', 1)
+    if "app_touch_short_press" not in t: sys.exit("apply.py: long-press anchor not found")
+    ap3.write_text(t); print("  patched main/app.c (touch stand-ins for BOOT)")

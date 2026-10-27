@@ -30,7 +30,7 @@ bool musecorder_console_command(const char *line);           // serial ">wifi=..
     "Actions: set{k:v}, inc/dec/toggle k, log, if{if,then,else}, exit, led #rrggbb, tone{freq|freq:[..],ms} (speaker), pwm{pin,duty,freq}, gpio.write{pin,value}, gpio.read{pin,to}, adc.read{pin,to} (36 39 32 34 35), " \
     "i2c.scan{to}, i2c.read{addr,reg,len,to}, i2c.write{addr,reg,data} (pins from applet i2c{sda,scl}, default 21/22), draw.rect{x,y,w,h,color}, draw.text{x,y,text,scale,color}, clear, " \
     "muse.say \"text\" (posts into your chat with this Muse), muse.ask{text,to}, http{method,url,json,to} (may fail: little RAM), vm.write{path,text,append} (refused unless the credential has the scope). " \
-    "${expr}: state keys, math, comparisons, len int round pad clock hhmmss random. Screen is 320x480 (y 28-452 usable)."
+    "${expr}: state keys, math, comparisons, len int round pad clock hhmmss random. Screen is 320x480 (y 28-452 usable). Holding a finger on the screen for 1 s opens the launcher (stored applets)."
 #define MUSECORDER_REMOVE_DESC "Stop the running applet and bring back the status screen (it stays stored). id: delete that stored applet. all:true deletes every stored applet."
 #define MUSECORDER_STATE_DESC \
     "Read the running applet: id, state values, last log lines, stored applet ids, free RAM. Optional set: an object of state keys to assign first; calibrate:true runs the touch setup on the screen."

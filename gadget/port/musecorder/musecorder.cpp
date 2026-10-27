@@ -34,6 +34,9 @@ extern "C" {   // Meta's C headers without C++ guards
 extern "C" {
 #include "button.h"
 #include "wifi_known.h"
+#include "link_pairing.h"
+void app_touch_short_press(void);   // app.c: the BOOT tap (confirms pairing) and the 5 s hold (erases setup), from the touchscreen
+void app_touch_long_press(void);
 }
 #include "esp_system.h"
 
@@ -780,6 +783,7 @@ static bool startStored(const std::string &id, bool fresh) {
 }
 
 // ---------------------------------------------------------------- launcher (tap the title, or the idle screen)
+static int64_t s_repair_until = 0;
 static void launcherDraw() {
     s_hits.clear(); clearRows(0, s_screen_h);
     int y = TOP_CLEAR + 8; drawText(y, "Musecorder", 3, C_MUTED); y += 8 * 3 + 12;
@@ -793,39 +797,59 @@ static void launcherDraw() {
     if (ids.empty()) { drawText(y + 8, "no applets yet", 2, C_MUTED); drawText(y + 32, "ask your Muse to install one", 2, C_MUTED); y += 64; }
     y = s_screen_h - TOP_CLEAR - 2 * (BTN_H + 8);
     drawButton(12, y, s_screen_w - 24, s_running ? "Stop: status screen" : "Status screen", C_BTN_HOT); s_hits.push_back({12, y, s_screen_w - 24, BTN_H, "status"}); y += BTN_H + 8;
-    int half = (s_screen_w - 24 - 8) / 2;
-    drawButton(12, y, half, "Back", C_BTN); s_hits.push_back({12, y, half, BTN_H, "back"});
-    drawButton(12 + half + 8, y, half, "Touch setup", C_BTN); s_hits.push_back({12 + half + 8, y, half, BTN_H, "calibrate"});
+    int third = (s_screen_w - 24 - 16) / 3;
+    drawButton(12, y, third, "Back", C_BTN); s_hits.push_back({12, y, third, BTN_H, "back"});
+    drawButton(12 + third + 8, y, third, "Touch", C_BTN); s_hits.push_back({12 + third + 8, y, third, BTN_H, "calibrate"});
+    bool arming = s_repair_until > esp_timer_get_time();
+    drawButton(12 + 2 * (third + 8), y, third, arming ? "SURE?" : "Re-pair", arming ? C_BTN_HOT : C_BTN); s_hits.push_back({12 + 2 * (third + 8), y, third, BTN_H, "repair"});
+    if (arming) drawText(y - 24, "tap SURE? to erase pairing", 2, C_BAR);
 }
-static void launcherOpen() { s_launcher = true; launcherDraw(); }
+static void launcherOpen() { s_launcher = true; s_repair_until = 0; launcherDraw(); ESP_LOGI(TAG, "launcher open"); }
 static void launcherClose() { s_launcher = false; s_hits.clear(); s_cleared = false; if (s_running) s_dirty_screen = true; else led_status_show_animation(); }
 static void launcherTap(const std::string &ev) {
+    ESP_LOGI(TAG, "launcher: %s", ev.c_str());
     if (ev == "back") launcherClose();
     else if (ev == "calibrate") wizStart();
+    else if (ev == "repair") {   // two taps within 8 s: the same as holding BOOT for 5 s (erase pairing, reboot into setup)
+        if (s_repair_until > esp_timer_get_time()) { s_repair_until = 0; drawText(s_screen_h / 2, "erasing pairing...", 2, C_TEXT); app_touch_long_press(); }
+        else { s_repair_until = esp_timer_get_time() + 8000000; launcherDraw(); }
+    }
     else if (ev == "status") { if (s_running) { storeSet("run", nullptr); stopApplet(false); } launcherClose(); }
     else if (!ev.compare(0, 4, "run:")) { std::string id = ev.substr(4); s_launcher = false; s_hits.clear(); if (!(s_running && id == s_app_id)) { if (!startStored(id, false)) { logf("launch %s failed", id.c_str()); launcherClose(); } } else launcherClose(); }
 }
 
 // ---------------------------------------------------------------- touch dispatch
-static bool s_down = false; static int s_dx = 0, s_dy = 0, s_down_n = 0;
+static bool s_down = false, s_wiz_wait_up = false, s_held = false; static int s_dx = 0, s_dy = 0, s_down_n = 0, s_up_n = 0;
 static void onTap(int x, int y) {
     if (s_launcher) { for (auto &h : s_hits) if (x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h) { launcherTap(h.ev); return; } return; }
-    if (!s_running) { launcherOpen(); return; }
+    if (!s_running) { if (link_pairing_confirmation_required()) { ESP_LOGI(TAG, "touch confirms pairing"); app_touch_short_press(); } else launcherOpen(); return; }
     for (auto &h : s_hits) if (x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h) { if (!h.ev.empty()) fire(h.ev.c_str()); return; }
-    if (y < TOP_CLEAR + 44) { launcherOpen(); return; }
+    if (y < TOP_CLEAR + 60) { launcherOpen(); return; }   // the title band
     s_state["touch.x"] = Value::N(x); s_state["touch.y"] = Value::N(y); fire("touch");
 }
 static void touchTick() {
-    if (!s_touch_ok) return;
+    if (!s_touch_ok || esp_timer_get_time() < 2000000) return;   // the pen IRQ reads low briefly after power-up: ignore the first 2 s
     int x = 0, y = 0; bool p = touchRead(&x, &y);
-    if (s_wiz >= 0) { if (p) s_down = true; else if (s_down) { s_down = false; wizSample(); } return; }
+    if (s_wiz >= 0) { if (s_wiz_wait_up) { if (!p) s_wiz_wait_up = false; return; } if (p) { s_down = true; s_up_n = 0; } else if (s_down) { if (++s_up_n < 3) return; s_down = false; ESP_LOGI(TAG, "touch setup sample %d: raw %d,%d", s_wiz + 1, s_raw_x, s_raw_y); wizSample(); } return; }
     if (p) {
-        if (!s_down) { s_down = true; s_down_n = 0; }
+        s_up_n = 0;
+        if (!s_down) {
+            s_down = true; s_down_n = 0; s_held = false;
+            ESP_LOGI(TAG, "touch down raw %d,%d -> %d,%d%s", s_raw_x, s_raw_y, x, y, s_cal.valid ? "" : " (uncalibrated)");
+            if (!s_cal.valid) { wizStart(); s_down = false; s_wiz_wait_up = true; return; }   // the finger that opened it is not a sample   // first touch ever: calibrate before anything else
+        }
         else s_down_n++;
         s_dx = x; s_dy = y;
+        if (!s_held && s_down_n == 1000 / MC_TICK_MS && !s_launcher) {   // held for a second: the launcher, from any screen
+            s_held = true; bool onButton = false;
+            for (auto &h : s_hits) if (x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h) onButton = true;
+            if (!onButton) launcherOpen();
+        }
         if (s_running && !s_launcher && hasHandler("touch:move")) { s_state["touch.x"] = Value::N(x); s_state["touch.y"] = Value::N(y); fire("touch:move"); }
     } else if (s_down) {
+        if (++s_up_n < 3) return;   // resistive contact flickers: the pen is up only after 3 quiet ticks (150 ms)
         s_down = false;
+        if (s_held) { s_held = false; return; }
         if (s_down_n + 1 >= MC_TAP_SAMPLES) onTap(s_dx, s_dy);
     }
 }
