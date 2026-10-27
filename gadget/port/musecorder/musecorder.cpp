@@ -239,6 +239,62 @@ static void doVmWrite(cJSON *w) {
     free(txt);
 }
 
+// ---------------------------------------------------------------- talking to your Muse (the chat routes Muse boards use)
+// muse.say posts a user turn into your Muse's chat (POST /chat/stream). muse.ask does the same and keeps a
+// POST /chat/subscribe stream open to collect the reply text (delta.text_append ... delta.message_done).
+static int64_t s_sub_id = 0; static std::string s_sub_line, s_reply; static std::string s_ask_to; static int s_say_status = 0; static char s_say_body[64];
+static void sayCb(void *ctx, int status, const uint8_t *data, size_t len, bool end) {
+    (void)ctx;
+    if (status > 0) s_say_status = status;
+    if (data && len && !s_say_body[0]) { size_t n = len < sizeof(s_say_body) - 1 ? len : sizeof(s_say_body) - 1; memcpy(s_say_body, data, n); s_say_body[n] = 0; }
+    if (status < 0) { logf("muse.say failed (session)"); s_say_status = 0; s_say_body[0] = 0; }
+    else if (end) { logf("muse.say -> %d %s", s_say_status, s_say_status == 200 ? "" : s_say_body); s_say_status = 0; s_say_body[0] = 0; }
+}
+static void subLine(const std::string &line) {
+    cJSON *j = cJSON_Parse(line.c_str()); if (!j) return;
+    const char *type = cJSON_GetStringValue(cJSON_GetObjectItem(j, "type"));
+    const char *ev = cJSON_GetStringValue(cJSON_GetObjectItem(j, "event"));
+    cJSON *payload = cJSON_GetObjectItem(j, "payload");
+    if (type && !strcmp(type, "event") && ev) {
+        if (!strcmp(ev, "delta.text_append")) { const char *tx = cJSON_GetStringValue(cJSON_GetObjectItem(payload, "text")); if (tx && s_reply.size() < 400) s_reply += tx; }
+        else if (!strcmp(ev, "delta.message_done") || !strcmp(ev, "message.assistant")) {
+            const char *tx = cJSON_GetStringValue(cJSON_GetObjectItem(payload, "display_text")); if (!tx) tx = cJSON_GetStringValue(cJSON_GetObjectItem(payload, "content"));
+            std::string final = tx ? std::string(tx) : s_reply; if (final.size() > 400) final.resize(400);
+            if (!s_ask_to.empty()) { s_state[s_ask_to] = Value::S(final); s_dirty_screen = s_dirty_state = true; }
+            logf("muse: %.60s", final.c_str()); s_reply.clear();
+        }
+    }
+    cJSON_Delete(j);
+}
+static void subCb(void *ctx, int status, const uint8_t *data, size_t len, bool end) {
+    (void)ctx;
+    if (status < 0 || end) { s_sub_id = 0; s_sub_line.clear(); if (status < 0) logf("muse subscribe closed"); else logf("muse subscribe ended %d", status); return; }
+    if (status > 0 && status != 200) { logf("muse subscribe -> %d", status); }
+    for (size_t i = 0; i < len; i++) {
+        char ch = (char)data[i];
+        if (ch == '\n') { if (!s_sub_line.empty()) subLine(s_sub_line); s_sub_line.clear(); }
+        else if (s_sub_line.size() < 1500) s_sub_line += ch;
+    }
+}
+static bool ensureSubscribed() {
+    if (s_sub_id > 0) return true;
+    static const char *const headers[] = {"Content-Type", "application/json", "Accept", "application/x-ndjson", nullptr};
+    s_sub_id = noise_ctrl_req_open("POST", "/chat/subscribe", headers, false, subCb, nullptr);
+    if (s_sub_id <= 0) { logf("muse subscribe: busy"); return false; }
+    if (!noise_ctrl_req_send(s_sub_id, "{}", 2, true, 2000)) { logf("muse subscribe: send failed"); s_sub_id = 0; return false; }
+    return true;
+}
+static void doMuseSay(const char *text, const char *to) {
+    if (!s_vm_up) { logf("muse.say: session down"); return; }
+    if (to) { s_ask_to = to; s_reply.clear(); ensureSubscribed(); }
+    cJSON *b = cJSON_CreateObject(); cJSON_AddStringToObject(b, "message", render(text).asStr().c_str()); cJSON_AddStringToObject(b, "output_modality", "text");
+    char *txt = cJSON_PrintUnformatted(b); cJSON_Delete(b); if (!txt) return;
+    static const char *const headers[] = {"Content-Type", "application/json", nullptr};
+    int64_t id = noise_ctrl_req_open("POST", "/chat/stream", headers, false, sayCb, nullptr);
+    if (id <= 0) logf("muse.say: busy"); else if (!noise_ctrl_req_send(id, txt, strlen(txt), true, 2000)) logf("muse.say: send failed");
+    free(txt);
+}
+
 static void doGpioWrite(cJSON *g) {
     int pin = (int)fromJson(cJSON_GetObjectItem(g, "pin")).asNum(); int v = fromJson(cJSON_GetObjectItem(g, "value")).truthy();
     if (!pinAllowed(pin) || pin >= 34) { logf("gpio.write: pin %d not allowed", pin); return; }
@@ -274,6 +330,8 @@ static void runOne(cJSON *a, int depth) {
     if (cJSON *x = cJSON_GetObjectItem(a, "led")) doLed(cJSON_GetStringValue(x));
     if (cJSON *x = cJSON_GetObjectItem(a, "http")) { doHttp(x); s_dirty_screen = true; }
     if (cJSON *x = cJSON_GetObjectItem(a, "vm.write")) doVmWrite(x);
+    if (cJSON *x = cJSON_GetObjectItem(a, "muse.say")) doMuseSay(cJSON_GetStringValue(x), nullptr);
+    if (cJSON *x = cJSON_GetObjectItem(a, "muse.ask")) { const char *to = cJSON_GetStringValue(cJSON_GetObjectItem(x, "to")); doMuseSay(cJSON_GetStringValue(cJSON_GetObjectItem(x, "text")), to ? to : "reply"); }
     if (cJSON *x = cJSON_GetObjectItem(a, "if")) {
         bool ok = fromJson(x).truthy();
         runActions(cJSON_GetObjectItem(a, ok ? "then" : "else"), depth + 1);
@@ -372,6 +430,7 @@ static void stopApplet(bool restoreScreen) {
     if (s_app) { fire("stop"); cJSON_Delete(s_app); s_app = nullptr; }
     s_timers.clear(); s_watches.clear(); s_state.clear(); s_running = false; s_exit = false; s_cleared = false;
     free(s_strip); s_strip = nullptr;
+    if (s_sub_id > 0) { noise_ctrl_req_cancel(s_sub_id); s_sub_id = 0; }
     if (restoreScreen) led_status_show_animation();
 }
 static bool startApplet(cJSON *doc, bool fresh) {

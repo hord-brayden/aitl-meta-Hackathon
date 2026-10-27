@@ -25,7 +25,7 @@ void musecorder_screen_reset(void);                          // the status scree
     "\"on\":{\"boot:press\":[{\"inc\":\"n\"}],\"every:300\":[{\"log\":\"minute ${n}\"}]}}. " \
     "Events: start, boot:press, every:SECONDS, gpio:PIN:rise|fall|change (pins 4 16 17 21 22 25 26 32 34-39), custom names via applet.event. " \
     "Actions: set{k:v}, inc/dec/toggle k, log, led #rrggbb, gpio.write{pin,value}, gpio.read{pin,to}, vm.write{path,text,append} (file on this VM; refused if the credential lacks the scope: read state with applet.state instead), " \
-    "http{method,url,json,to} (may fail: little RAM), if{if,then,else}, exit. ${expr}: state keys, math, comparisons, len int round pad clock hhmmss random. Under 4 KB."
+    "muse.say \"text\" (posts a message into your chat with this Muse), muse.ask{text,to} (same, reply text into state key to), http{method,url,json,to} (may fail: little RAM), if{if,then,else}, exit. ${expr}: state keys, math, comparisons, len int round pad clock hhmmss random. Under 4 KB."
 #define MUSECORDER_REMOVE_DESC "Stop and delete the running applet and bring back the status screen."
 #define MUSECORDER_STATE_DESC \
     "Read the running applet: its id, state values and the last log lines. Optional set: an object of state keys to assign first."
