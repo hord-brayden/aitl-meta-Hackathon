@@ -42,6 +42,7 @@ void app_touch_long_press(void);
 }
 #include "esp_system.h"
 #include "esp_sleep.h"
+#include "rom/ets_sys.h"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -1139,12 +1140,30 @@ extern "C" bool musecorder_console_command(const char *line) {
         const char *arg = line + 6;
         if (!strcmp(arg, "cal")) { if (!s_touch_ok) { printf("@touch no touch device\n"); return true; } xSemaphoreTake(s_lock, portMAX_DELAY); wizStart(); xSemaphoreGive(s_lock); printf("@touch calibration on screen\n"); fflush(stdout); return true; }
         printf("@touch ok=%d errors=%u ticks=%u cal=%d\n", s_touch_ok, (unsigned)s_touch_err, (unsigned)s_ticks, s_cal.valid);
-#if MC_TOUCH_XPT2046
-        xSemaphoreTake(s_lock, portMAX_DELAY);
-        for (int i = 0; i < 8; i++) { int x = xptRead(0xD1), y = xptRead(0x91), z = xptRead(0xB1); xptRead(0x90); printf("@touch irq36=%d raw x=%d y=%d z1=%d\n", gpio_get_level(GPIO_NUM_36), x, y, z); vTaskDelay(pdMS_TO_TICKS(250)); }
-        xSemaphoreGive(s_lock);
-#endif
         i2cProbePins(33, 32); i2cProbePins(21, 22); i2cProbePins(27, 22);
+#if MC_TOUCH_XPT2046
+        // Candidate B: a separate bit-banged XPT2046 bus (Sunton-style resistive boards): CLK 25, MOSI 32, MISO 39, CS 33.
+        auto bb = [](uint8_t cmd) {
+            gpio_set_level(GPIO_NUM_33, 0); int v = 0;
+            for (int b = 7; b >= 0; b--) { gpio_set_level(GPIO_NUM_32, (cmd >> b) & 1); gpio_set_level(GPIO_NUM_25, 1); esp_rom_delay_us(2); gpio_set_level(GPIO_NUM_25, 0); esp_rom_delay_us(2); }
+            for (int b = 0; b < 16; b++) { gpio_set_level(GPIO_NUM_25, 1); esp_rom_delay_us(2); v = (v << 1) | gpio_get_level(GPIO_NUM_39); gpio_set_level(GPIO_NUM_25, 0); esp_rom_delay_us(2); }
+            gpio_set_level(GPIO_NUM_33, 1); return (v >> 4) & 0xFFF;
+        };
+        printf("@touch 10 s: press and hold the middle of the screen now\n"); fflush(stdout);
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        for (int i = 0; i < 20; i++) {
+            int x = xptRead(0xD1), y = xptRead(0x91), z = xptRead(0xB1); xptRead(0x90);
+            printf("@touch A(spi) irq36=%d x=%d y=%d z1=%d", gpio_get_level(GPIO_NUM_36), x, y, z);
+            if (i == 10) {   // switch the pins to GPIO for candidate B (the SPI device stays attached; pins 33/32/25/39 are not on that bus)
+                gpio_reset_pin(GPIO_NUM_25); gpio_set_direction(GPIO_NUM_25, GPIO_MODE_OUTPUT); gpio_reset_pin(GPIO_NUM_32); gpio_set_direction(GPIO_NUM_32, GPIO_MODE_OUTPUT);
+                gpio_reset_pin(GPIO_NUM_39); gpio_set_direction(GPIO_NUM_39, GPIO_MODE_INPUT); gpio_reset_pin(GPIO_NUM_33); gpio_set_direction(GPIO_NUM_33, GPIO_MODE_OUTPUT); gpio_set_level(GPIO_NUM_33, 1);
+            }
+            if (i >= 10) { int bx = bb(0xD1), by = bb(0x91), bz = bb(0xB1); bb(0x90); printf("  B(bitbang 25/32/39/33) x=%d y=%d z1=%d", bx, by, bz); }
+            printf("\n"); fflush(stdout); vTaskDelay(pdMS_TO_TICKS(500));
+        }
+        xSemaphoreGive(s_lock);
+        printf("@touch probe done; reboot to restore the pins\n");
+#endif
         fflush(stdout); return true;
     }
     if (strncmp(line, "wifi=", 5)) return false;
