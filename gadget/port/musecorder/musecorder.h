@@ -38,12 +38,7 @@ bool musecorder_console_command(const char *line);           // serial ">wifi=..
 #define MUSECORDER_WIFI_ADD_DESC "Remember another Wi-Fi network on this gadget (up to 8); it joins whichever saved network is nearby after a reboot or when the current one drops. Ask the user for the password; it is stored on the device only."
 #define MUSECORDER_WIFI_FORGET_DESC "Forget a saved Wi-Fi network by ssid."
 #define MUSECORDER_WIFI_LIST_DESC "List the Wi-Fi networks this gadget remembers (names only)."
-#define MUSECORDER_SD_LIST_DESC "List the files on the gadget's microSD card (its mc folder) with sizes."
-#define MUSECORDER_SD_READ_DESC "Read the last bytes of a file on the microSD card (tail, default 384)."
-#define MUSECORDER_SD_APPEND_DESC "Append one line of text to a file on the microSD card: logs that survive reboots and need no network."
-#define MUSECORDER_SD_DELETE_DESC "Delete a file on the microSD card."
-#define MUSECORDER_SD_FETCH_DESC "Copy a file from this VM (path as display.draw_file takes it, e.g. workspace/cat.jpg) onto the microSD card as file (default: its own name). Runs in the background for a few seconds; applet.state's log then says 'sd.fetch <file>: N bytes'. A baseline JPEG up to about 240 px can then be shown any time with sd.draw, offline, with no memory wall."
-#define MUSECORDER_SD_DRAW_DESC "Draw a baseline JPEG (or raw RGB565) file from the microSD card on the screen; optional row. Replies at once; the applet log says sd.draw ok or why not."
+#define MUSECORDER_SD_DESC "microSD card. op=list (files in folder mc) | read{file,tail} (last bytes, default 384) | append{file,text} (log a line) | delete{file} | fetch{path,file} (copy a file from this VM, e.g. workspace/cat.jpg, onto the card; background, a few seconds; applet.state log says sd.fetch <file>: N bytes) | draw{file,row} (show a baseline JPEG from the card: offline, no memory wall)."
 
 #ifdef __cplusplus
 }

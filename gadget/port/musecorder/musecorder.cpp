@@ -1084,7 +1084,11 @@ extern "C" bool musecorder_console_command(const char *line) {
 
 extern "C" cJSON *musecorder_command(const char *command, cJSON *params) {
     if (!strncmp(command, "wifi.", 5)) return wifiCommand(command, params);
-    if (!strncmp(command, "sd.", 3)) { if (!s_lock) return errorResult("unavailable", "runtime not ready"); xSemaphoreTake(s_lock, portMAX_DELAY); cJSON *r = sdCommand(command, params); xSemaphoreGive(s_lock); return r; }
+    if (!strcmp(command, "sd") || !strncmp(command, "sd.", 3)) {   // one registered command: sd {op,...}; sd.<op> accepted too
+        if (!s_lock) return errorResult("unavailable", "runtime not ready");
+        std::string name = command; if (name == "sd") { const char *op = cJSON_GetStringValue(cJSON_GetObjectItem(params, "op")); name = std::string("sd.") + (op ? op : "list"); }
+        xSemaphoreTake(s_lock, portMAX_DELAY); cJSON *r = sdCommand(name.c_str(), params); xSemaphoreGive(s_lock); return r;
+    }
     if (strncmp(command, "applet.", 7)) return nullptr;
     if (!s_lock) return errorResult("unavailable", "runtime not ready");
     if (!strcmp(command, "applet.install")) {
