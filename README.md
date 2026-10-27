@@ -17,8 +17,8 @@
                                                                                                 └──────────────────────────┘
 ```
 
-<p align="center"><img src="docs/img/4in-home.png" width="320" alt="4-inch: home, two panes"> <img src="docs/img/4in-applet.png" width="320" alt="4-inch: Door Tally applet"></p>
-<p align="center"><i>The same hardware in its Mac-bridge personality (see below); gadget-mode photos are in <code>docs/DEMO.md</code>.</i></p>
+<p align="center"><img src="docs/img/gadget-launcher.jpg" height="400" alt="The launcher: five applets Muse wrote"> <img src="docs/img/gadget-pomodoro.jpg" height="400" alt="A pomodoro timer Muse wrote from one sentence"> <img src="docs/img/gadget-cat.jpg" height="400" alt="A cat Muse drew on its VM and sent over the encrypted session"></p>
+<p align="center"><i>Left to right: the launcher with five applets Muse wrote (door tally, sketch pad, pomodoro, today's calendar, ask Muse); the pomodoro; a cat Muse generated on its VM and drew over the encrypted session in 307 ms. Submission notes: <a href="docs/SUBMISSION.md">docs/SUBMISSION.md</a>.</i></p>
 
 ## The idea
 
@@ -42,7 +42,9 @@ screen back. Up to five applets stay on the device; tap the title bar to switch.
 | **Applet runtime inside Meta's firmware**: `applet.install / remove / state / event`; JSON screens (text, big numerals, bars, touch buttons, free canvas), state with persistence, `${expr}` templates, handlers for touch, BOOT, timers, GPIO edges and custom events | `gadget/port/musecorder/` |
 | Actions: `tone` (speaker), `led`, `pwm`, `gpio.read/write`, `adc.read`, `i2c.scan/read/write`, `draw.rect/text`, `http`, `muse.say` (posts into your Muse chat), `muse.ask`, `vm.write` | same |
 | Touchscreen: XPT2046 (resistive, on the LCD bus) or CST820 (capacitive, I²C), 3-tap on-screen calibration, launcher with the stored applets | same |
-| Images from Muse: `display.draw_url` (plain `http://` on the LAN on this no-PSRAM board), Meta's status animation replaced by your own Muse sprite | `gadget/port/gen_avatar_anim.py` |
+| Images from Muse: `display.draw_file` straight from Muse's VM over the encrypted session (160 px JPEG in 307 ms), `display.draw_url` over plain `http://`, Meta's status animation replaced by your own Muse sprite | `gadget/port/gen_avatar_anim.py` |
+| Verified applets Muse wrote unaided from one sentence each: door tally, pomodoro, dice, sketch pad, today's calendar (Muse reads Google Calendar on its VM and puts the events on the device) | the Muse app |
+| Several Wi-Fi networks: `wifi.add/list/forget` from Muse, or `gadget/wifi.py` over USB from a gitignored `.env` | `gadget/wifi.py` |
 | Ready-made applets to paste into the Muse chat: door tally, sketch pad, dice, voltmeter, I²C scanner | [`examples/gadget/`](examples/gadget/) |
 
 The **Mac-bridge personality** (the original AITL firmware: chat with Muse Spark on the device, Muse Code sessions and

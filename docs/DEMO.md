@@ -24,6 +24,8 @@ beat at the end as "and when you do have a laptop".
 5. **Switch jobs without touching a cable (30 s).** *"Make it a sketch pad with cyan and pink."* Draw with a finger.
    Then tap the title bar: the launcher lists Door Tally and Sketch; tap Door Tally; the count is still there
    (state persists per applet in its own flash partition).
+6a. **Muse draws (15 s).** From the status screen: *"Make a 160 px pixel-art cat, save it on your VM and show it on my
+   gadget."* It appears in a third of a second. *"Show me today's calendar on the gadget"* for the Today applet.
 6. **Hardware is reachable (30 s).** *"Make it a voltmeter on pin 35 that reports the peak every minute."* Touch the
    jumper to 3V3 and GND, watch the bar. Or: *"Scan the I²C bus on 21 and 22 and show what you find."*
 7. **Why it cannot brick itself (10 s).** "Applets are data. The firmware image is never written; the store is a
@@ -45,14 +47,14 @@ beat at the end as "and when you do have a laptop".
 
 ## Known limits (say them before the judges find them)
 - No PSRAM on this board: HTTPS from an applet and `display.draw_url` with https fail for lack of a 17 KB block;
-  plain http on the LAN works. Muse's chat *reply* is read back onto the screen only on PSRAM boards (`muse.ask`);
-  here it posts only.
+  `display.draw_file` from Muse's VM works (160 px baseline JPEG in 307 ms), as does plain http on the LAN. Muse's
+  chat *reply* is read back onto the screen only on PSRAM boards (`muse.ask`); here it posts only.
 - The VM refuses `/fs/write` and `/identity` for this device credential (`403 route not allowed for this
   credential's scopes`), so `vm.write` is blocked; `muse.say` and `applet.state` cover the same ground.
 - Five stored applets, 4 KB each.
 
 ## Submission checklist (due 2026-11-04, 9:00 PM ET)
-- [ ] Repo public (or shared with the judges' account) with this README and the photos in `docs/img/gadget-*.jpg`.
+- [ ] Repo public (or shared with the judges' account); `docs/SUBMISSION.md` is the write-up, photos in `docs/img/gadget-*.jpg`.
 - [ ] 3-minute video following the beats above; subtitles for the chat text.
 - [ ] One paragraph on Muse usage: Muse Gadget SDK (pairing, control session, `link.register` commands, chat route),
       Muse app as the only UI, Muse Code + MCP + skill in bridge mode.
