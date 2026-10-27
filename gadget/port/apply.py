@@ -127,3 +127,66 @@ for name in ("happy_anim.c", "happy_anim.h"):
         dst = root / "avatar" / name
         if not dst.exists() or dst.read_bytes() != srcf.read_bytes():
             dst.write_bytes(srcf.read_bytes()); print(f"  copied avatar/{name} (your Muse's sprite)")
+
+# --- CYD: Musecorder applet runtime (gadget/port/musecorder -> main/, commands applet.*) ---
+mc = pathlib.Path(__file__).resolve().parent / "musecorder"
+for name in ("musecorder.cpp", "musecorder.h"):
+    srcf = mc / name; dst = root / "main" / name
+    if not dst.exists() or dst.read_bytes() != srcf.read_bytes():
+        dst.write_bytes(srcf.read_bytes()); print(f"  copied main/{name}")
+cm = root / "main" / "CMakeLists.txt"; t = cm.read_text()
+if '"musecorder.cpp"' not in t:
+    t = t.replace('    "app.c"\n', '    "app.c"\n    "musecorder.cpp"\n', 1); cm.write_text(t); print("  patched main/CMakeLists.txt (musecorder.cpp)")
+kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
+if "HOMEHUB_MUSECORDER" not in t:
+    t = t.replace("    config HOMEHUB_SENSECAP_SENSORS\n", (
+        "    config HOMEHUB_MUSECORDER\n"
+        "        bool \"Musecorder applet runtime (applet.install/remove/state/event)\"\n"
+        "        depends on HOMEHUB_LED_BACKEND_CYD_ILI9341 || HOMEHUB_LED_BACKEND_CYD_ST7796\n"
+        "        default y\n"
+        "        help\n"
+        "            Lets Muse install small JSON tools (applets) on the gadget over the control\n"
+        "            session: state, timers, BOOT button, GPIO, HTTP, writes into the VM's files and\n"
+        "            a text screen on the status display. See main/musecorder.h.\n"
+        "\n"
+        "    config HOMEHUB_SENSECAP_SENSORS\n"), 1)
+    kc.write_text(t); print("  patched main/Kconfig.projbuild (HOMEHUB_MUSECORDER)")
+nc = root / "main" / "noise_control.cpp"; t = nc.read_text()
+if "MUSECORDER_INSTALL_DESC" not in t:
+    t = t.replace('#include "noise_control.h"\n', '#include "noise_control.h"\n#if CONFIG_HOMEHUB_MUSECORDER\n#include "musecorder.h"\n#endif\n', 1)
+    reg = (
+        "#if CONFIG_HOMEHUB_MUSECORDER\n"
+        "    {\n"
+        "        cJSON *json_required = cJSON_CreateObject();\n"
+        "        cJSON_AddItemToObject(json_required, \"json\", string_param(\"The applet, as a JSON object or a JSON string.\"));\n"
+        "        add_command(commands, \"applet.install\", MUSECORDER_INSTALL_DESC, json_required, nullptr);\n"
+        "        add_command(commands, \"applet.remove\", MUSECORDER_REMOVE_DESC, nullptr, nullptr);\n"
+        "        cJSON *set_optional = cJSON_CreateObject();\n"
+        "        cJSON *set_param = cJSON_CreateObject();\n"
+        "        cJSON_AddStringToObject(set_param, \"type\", \"object\");\n"
+        "        cJSON_AddStringToObject(set_param, \"description\", \"State keys to assign before reading, e.g. {\\\"count\\\": 0}.\");\n"
+        "        cJSON_AddItemToObject(set_optional, \"set\", set_param);\n"
+        "        add_command(commands, \"applet.state\", MUSECORDER_STATE_DESC, nullptr, set_optional);\n"
+        "        cJSON *name_required = cJSON_CreateObject();\n"
+        "        cJSON_AddItemToObject(name_required, \"name\", string_param(\"The event name (a key under the applet's on object).\"));\n"
+        "        add_command(commands, \"applet.event\", MUSECORDER_EVENT_DESC, name_required, nullptr);\n"
+        "    }\n"
+        "#endif\n"
+        "#if CONFIG_HOMEHUB_VOICE\n")
+    t = t.replace("#if CONFIG_HOMEHUB_VOICE\n", reg, 1)
+    t = t.replace('    ESP_LOGI(TAG, "link.register acked; tunnel may open");',
+                  '    ESP_LOGI(TAG, "link.register acked; tunnel may open");\n#if CONFIG_HOMEHUB_MUSECORDER\n    musecorder_vm_connected();\n#endif', 1)
+    if "musecorder_vm_connected" not in t: sys.exit("apply.py: register-ack anchor not found")
+    nc.write_text(t); print("  patched main/noise_control.cpp (applet.* registered)")
+ap = root / "main" / "app.c"; t = ap.read_text()
+if "musecorder_command" not in t:
+    t = t.replace('#include "button.h"\n', '#include "button.h"\n#if CONFIG_HOMEHUB_MUSECORDER\n#include "musecorder.h"\n#endif\n', 1)
+    t = t.replace("static void on_button_short_press(void) {\n    factory_test_on_button_press();\n",
+                  "static void on_button_short_press(void) {\n    factory_test_on_button_press();\n#if CONFIG_HOMEHUB_MUSECORDER\n    if (musecorder_on_tap()) return;   // a running applet owns the BOOT tap\n#endif\n", 1)
+    t = t.replace("    noise_ctrl_session_generation_t session_generation) {\n#if CONFIG_HOMEHUB_BLE_COMMANDS\n    if (ble_commands_handles(command)) {",
+                  "    noise_ctrl_session_generation_t session_generation) {\n#if CONFIG_HOMEHUB_MUSECORDER\n    {\n        cJSON *mc = musecorder_command(command, params);\n        if (mc) return mc;\n    }\n#endif\n#if CONFIG_HOMEHUB_BLE_COMMANDS\n    if (ble_commands_handles(command)) {", 1)
+    t = t.replace("        ESP_LOGW(TAG, \"button init failed — physical setup reset unavailable\");\n    }",
+                  "        ESP_LOGW(TAG, \"button init failed — physical setup reset unavailable\");\n    }\n#if CONFIG_HOMEHUB_MUSECORDER\n    musecorder_init();\n#endif", 1)
+    for needle in ("musecorder_on_tap", "musecorder_command(command", "musecorder_init();"):
+        if needle not in t: sys.exit("apply.py: app.c anchor missing for " + needle)
+    ap.write_text(t); print("  patched main/app.c (applet dispatch, BOOT tap, init)")
