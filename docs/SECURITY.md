@@ -31,7 +31,7 @@ action that touches your Mac is attributable to a paired device.
 - **Bluetooth link (Nordic UART)** — the Mac connects to the device; the bridge treats a BLE connection it initiated
   like USB (trusted). The link is not encrypted unless the host bonds; keep it for home use, prefer Wi-Fi TLS elsewhere.
   Device-mic audio over BLE is ADPCM at 8 KB/s, which a classic ESP32 BLE 4.2 link sustains with MTU 247.
-- **Claude Code hooks** — `aitl hooks install` adds PermissionRequest / Notification / Stop hooks that POST to
+- **Coding-agent hooks** — approval, notification and stop hooks from Muse Code (or another coding agent) POST to
   127.0.0.1:7778 only; they fail open (bridge down = normal terminal prompt) and never run anything themselves.
 - **Bluetooth HID** — standard BLE bonding with Secure Connections (no MITM pin: the device has no secure input).
   The host decides whether to trust the keyboard. Only ASCII keystrokes and media keys can be sent.
