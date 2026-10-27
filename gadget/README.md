@@ -65,7 +65,10 @@ contiguous block. Plain HTTP works: `display.draw_url` with an `http://` image o
 
 Credential scope: the VM answered `403 route not allowed for this credential's scopes` to `POST /fs/write` and
 `GET /identity` for this community-paired device (nothing in the firmware or the SDK token sets scopes), so
-`vm.write` is blocked for now. Muse pulls results with `applet.state` instead; that direction works.
+`vm.write` is blocked for now. Muse pulls results with `applet.state`; and the device pushes with `muse.say`:
+the applet posts a message into your chat with your Muse (the chat route Meta's own boards use), so "door count hit
+50" shows up in the app and your Muse can act on it. `muse.ask` additionally reads the reply back onto the screen on
+boards with PSRAM; on the classic ESP32 the 16 KB reply frames do not fit, so it posts only.
 
 Your Muse as the status sprite: `gadget/port/gen_avatar_anim.py` turns a GIF into Meta's cell-sprite format;
 `apply.py` installs the result.
