@@ -819,7 +819,7 @@ static void launcherTap(const std::string &ev) {
 }
 
 // ---------------------------------------------------------------- touch dispatch
-static bool s_down = false, s_wiz_wait_up = false, s_held = false; static int s_dx = 0, s_dy = 0, s_down_n = 0, s_up_n = 0;
+static bool s_down = false, s_wiz_wait_up = false, s_held = false; static int s_dx = 0, s_dy = 0, s_ox = 0, s_oy = 0, s_down_n = 0, s_up_n = 0;
 static void onTap(int x, int y) {
     if (s_launcher) { for (auto &h : s_hits) if (x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h) { launcherTap(h.ev); return; } return; }
     if (!s_running) { if (link_pairing_confirmation_required()) { ESP_LOGI(TAG, "touch confirms pairing"); app_touch_short_press(); } else launcherOpen(); return; }
@@ -834,13 +834,15 @@ static void touchTick() {
     if (p) {
         s_up_n = 0;
         if (!s_down) {
-            s_down = true; s_down_n = 0; s_held = false;
+            s_down = true; s_down_n = 0; s_held = false; s_ox = x; s_oy = y;
             ESP_LOGI(TAG, "touch down raw %d,%d -> %d,%d%s", s_raw_x, s_raw_y, x, y, s_cal.valid ? "" : " (uncalibrated)");
             if (!s_cal.valid) { wizStart(); s_down = false; s_wiz_wait_up = true; return; }   // the finger that opened it is not a sample   // first touch ever: calibrate before anything else
         }
         else s_down_n++;
         s_dx = x; s_dy = y;
-        if (!s_held && s_down_n == 1000 / MC_TICK_MS && !s_launcher) {   // held for a second: the launcher, from any screen
+        bool moved = abs(x - s_ox) > 15 || abs(y - s_oy) > 15;   // a drag (sketching) is not a hold
+        if (moved) s_held = true;   // and stays no-hold until the finger lifts
+        if (!s_held && s_down_n >= 1000 / MC_TICK_MS && !s_launcher) {   // held still for a second: the launcher, from any screen
             s_held = true; bool onButton = false;
             for (auto &h : s_hits) if (x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h) onButton = true;
             if (!onButton) launcherOpen();
@@ -849,7 +851,8 @@ static void touchTick() {
     } else if (s_down) {
         if (++s_up_n < 3) return;   // resistive contact flickers: the pen is up only after 3 quiet ticks (150 ms)
         s_down = false;
-        if (s_held) { s_held = false; return; }
+        bool dragged = abs(s_dx - s_ox) > 15 || abs(s_dy - s_oy) > 15;
+        if (s_held) { s_held = false; if (!dragged) return; }   // a finished hold is not a tap; a finished drag still reports touch
         if (s_down_n + 1 >= MC_TAP_SAMPLES) onTap(s_dx, s_dy);
     }
 }
