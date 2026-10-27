@@ -1127,7 +1127,26 @@ static cJSON *wifiCommand(const char *command, cJSON *params) {
 }
 // Serial console (sdk_token_console.c hands over lines it does not own): >wifi={"ssid":"..","password":"..","hidden":false}
 // stores a network and restarts so the boot join picks it up; >wifi={"forget":".."}; >wifi=list. Nothing echoes the password.
+// >touch=probe prints the pen line, raw XPT2046 reads and an I2C scan on the usual touch pins; >touch=cal forces the wizard.
+static void i2cProbePins(int sda, int scl) {
+    i2c_master_bus_config_t bc = {}; bc.i2c_port = I2C_NUM_1; bc.sda_io_num = (gpio_num_t)sda; bc.scl_io_num = (gpio_num_t)scl; bc.clk_source = I2C_CLK_SRC_DEFAULT; bc.glitch_ignore_cnt = 7; bc.flags.enable_internal_pullup = true;
+    i2c_master_bus_handle_t bus = nullptr; if (i2c_new_master_bus(&bc, &bus) != ESP_OK) { printf("@touch i2c %d/%d: bus failed\n", sda, scl); return; }
+    std::string found; for (int ad = 8; ad < 120; ad++) if (i2c_master_probe(bus, ad, 20) == ESP_OK) { char b[8]; snprintf(b, sizeof b, " 0x%02x", ad); found += b; }
+    i2c_del_master_bus(bus); printf("@touch i2c %d/%d:%s\n", sda, scl, found.empty() ? " nothing" : found.c_str());
+}
 extern "C" bool musecorder_console_command(const char *line) {
+    if (!strncmp(line, "touch=", 6)) {
+        const char *arg = line + 6;
+        if (!strcmp(arg, "cal")) { if (!s_touch_ok) { printf("@touch no touch device\n"); return true; } xSemaphoreTake(s_lock, portMAX_DELAY); wizStart(); xSemaphoreGive(s_lock); printf("@touch calibration on screen\n"); fflush(stdout); return true; }
+        printf("@touch ok=%d errors=%u ticks=%u cal=%d\n", s_touch_ok, (unsigned)s_touch_err, (unsigned)s_ticks, s_cal.valid);
+#if MC_TOUCH_XPT2046
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        for (int i = 0; i < 8; i++) { int x = xptRead(0xD1), y = xptRead(0x91), z = xptRead(0xB1); xptRead(0x90); printf("@touch irq36=%d raw x=%d y=%d z1=%d\n", gpio_get_level(GPIO_NUM_36), x, y, z); vTaskDelay(pdMS_TO_TICKS(250)); }
+        xSemaphoreGive(s_lock);
+#endif
+        i2cProbePins(33, 32); i2cProbePins(21, 22); i2cProbePins(27, 22);
+        fflush(stdout); return true;
+    }
     if (strncmp(line, "wifi=", 5)) return false;
     const char *arg = line + 5;
     if (!strcmp(arg, "list")) { cJSON *l = wifiList(); char *t = cJSON_PrintUnformatted(l); printf("@wifi list %s\n", t ? t : "[]"); fflush(stdout); free(t); cJSON_Delete(l); return true; }

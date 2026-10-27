@@ -7,3 +7,4 @@ d51846fc31d05aa409f5fd800adee507f7f49411a4663fac24f5618085e05b53  gadget-cyd40-v
 3fd5e9dfa934c3432030ece81790abad5b4035c5fdc117d930a7bf92f7c0e1f7  gadget-cyd40-v0.3-sd-muse-gadget.bin
 b45221c78ff7ca2bbbfdc4aa791f4520b9f4de00f39646ef6e826ea1fe7b0bed  gadget-cyd40-v0.3-sd-partition-table.bin
 2f0fc5be2ec7777e5cf14404a6e4a1ea2d2617cf3e25ec5996a9415573de12db  gadget-cyd40-v0.3-sd-phy_init_data.bin
+06195fcdb5941273ba6247f0c142b64a9233c9741c5637de4f6d3e60941a7e3e  cyd40-683f18-factory-4MB-2026-10-27.bin
