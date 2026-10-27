@@ -59,8 +59,13 @@ Muse's own files, so it can read the results back without any third-party servic
 (NVS) and a bad applet cannot brick the board: `applet.remove`, or a 5 s BOOT hold to re-pair, always works.
 
 Memory on the classic ESP32: Meta's session plus TLS leaves ~30 KB free, so the runtime keeps every buffer small
-and `http` (a second TLS connection) may fail; prefer `vm.write`. Boards with PSRAM (Freenove FNK0104B, Guition
-JC3248W535, Waveshare LCD-7) have none of these limits.
+and a second TLS connection (`http` to https://, `display.draw_url` with https://) fails for lack of a 17 KB
+contiguous block. Plain HTTP works: `display.draw_url` with an `http://` image on your LAN (a 160 px JPEG drew in
+320 ms). Boards with PSRAM (Freenove FNK0104B, Guition JC3248W535, Waveshare LCD-7) have none of these limits.
+
+Credential scope: the VM answered `403 route not allowed for this credential's scopes` to `POST /fs/write` and
+`GET /identity` for this community-paired device (nothing in the firmware or the SDK token sets scopes), so
+`vm.write` is blocked for now. Muse pulls results with `applet.state` instead; that direction works.
 
 Your Muse as the status sprite: `gadget/port/gen_avatar_anim.py` turns a GIF into Meta's cell-sprite format;
 `apply.py` installs the result.
