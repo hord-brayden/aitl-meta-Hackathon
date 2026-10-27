@@ -122,7 +122,10 @@ struct Parser {
         if (f == "str") return Value::S(A(0).asStr());
         if (f == "num") return Value::N(A(0).asNum());
         if (f == "upper" || f == "lower") { std::string s = A(0).asStr(); for (auto &c : s) c = f == "upper" ? toupper(c) : tolower(c); return Value::S(s); }
-        if (f == "pad") { std::string s = A(0).asStr(); int w = (int)A(1).asNum(); while ((int)s.size() < w) s = " " + s; return Value::S(s); }
+        if (f == "floor") return Value::N(floor(A(0).asNum()));
+        if (f == "ceil") return Value::N(ceil(A(0).asNum()));
+        if (f == "pad") { std::string s = A(0).asStr(); int w = (int)A(1).asNum(); std::string fill = a.size() > 2 ? A(2).asStr() : " "; if (fill.empty()) fill = " "; while ((int)s.size() < w) s = fill.substr(0, 1) + s; return Value::S(s); }
+        if (f == "mmss") { long t = (long)A(0).asNum(); if (t < 0) t = 0; char b[16]; snprintf(b, sizeof b, "%ld:%02ld", t / 60, t % 60); return Value::S(b); }
         if (f == "random") { double lo = A(0).asNum(), hi = a.size() > 1 ? A(1).asNum() : 100; if (hi < lo) hi = lo; return Value::N(lo + (double)(esp_random() % (uint32_t)(hi - lo + 1))); }
         if (f == "hhmmss") { long t = (long)A(0).asNum(); char b[16]; snprintf(b, sizeof b, "%02ld:%02ld:%02ld", t / 3600, (t / 60) % 60, t % 60); return Value::S(b); }
         if (f == "time") return Value::N((double)time(nullptr));
@@ -709,7 +712,7 @@ static void renderScreen() {
     cJSON_ArrayForEach(it, screen) {
         if (y >= bottom - 16) break;
         if (cJSON *t = cJSON_GetObjectItem(it, "text")) { drawText(y, render(cJSON_GetStringValue(t)).asStr(), 3, C_TEXT); y += 8 * 3 + 10; }
-        else if (cJSON *b = cJSON_GetObjectItem(it, "big")) { drawText(y, render(cJSON_GetStringValue(b)).asStr(), 8, C_BIG); y += 8 * 8 + 14; }
+        else if (cJSON *b = cJSON_GetObjectItem(it, "big")) { std::string t = render(cJSON_GetStringValue(b)).asStr(); int sc = 8; while (sc > 3 && (int)t.size() * (PIXEL_FONT_WIDTH * sc + sc) > s_screen_w) sc--; if (sc < 8) clearRows(y, y + 64); drawText(y + (64 - 8 * sc) / 2, t, sc, C_BIG); y += 8 * 8 + 14; }
         else if (cJSON *bar = cJSON_GetObjectItem(it, "bar")) { double mx = cJSON_GetObjectItem(it, "max") ? fromJson(cJSON_GetObjectItem(it, "max")).asNum() : 100; drawBar(y, mx > 0 ? fromJson(bar).asNum() / mx : 0, 16); y += 16 + 12; }
         else if (cJSON *g = cJSON_GetObjectItem(it, "gap")) { y += (int)fromJson(g).asNum(); }
         else if (cJSON *bt = cJSON_GetObjectItem(it, "button")) {
@@ -889,7 +892,7 @@ extern "C" void musecorder_init(void) {
     s_touch_ok = s_screen_w > 0 && touchInit();
     if (s_touch_ok) calLoad();
     button_set_press_cb(pressCb);
-    xTaskCreate(tickTask, "musecorder", 5120, nullptr, 3, nullptr);
+    xTaskCreate(tickTask, "musecorder", 4096, nullptr, 3, nullptr);
     ESP_LOGI(TAG, "ready (%dx%d, touch %s, store %s)", s_screen_w, s_screen_h, s_touch_ok ? "yes" : "no", s_store_ok ? "ok" : "none");
 }
 extern "C" void musecorder_vm_connected(void) { s_vm_up = true; }
@@ -1008,7 +1011,9 @@ extern "C" cJSON *musecorder_command(const char *command, cJSON *params) {
         xSemaphoreTake(s_lock, portMAX_DELAY);
         if (cJSON *set = cJSON_GetObjectItem(params, "set")) { cJSON *it = nullptr; cJSON_ArrayForEach(it, set) setState(it->string, it); s_dirty_screen = s_dirty_state = true; }
         if (cJSON_IsTrue(cJSON_GetObjectItem(params, "calibrate")) && s_touch_ok) wizStart();
-        cJSON *r = statePayload(); xSemaphoreGive(s_lock); return r;
+        cJSON *r = statePayload();
+        if (cJSON_IsTrue(cJSON_GetObjectItem(params, "doc")) && s_app) cJSON_AddItemToObject(cJSON_GetObjectItem(r, "payload"), "doc", cJSON_Duplicate(s_app, true));
+        xSemaphoreGive(s_lock); return r;
     }
     if (!strcmp(command, "applet.event")) {
         const char *name = cJSON_GetStringValue(cJSON_GetObjectItem(params, "name"));

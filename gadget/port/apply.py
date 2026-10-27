@@ -176,6 +176,8 @@ if "MUSECORDER_INSTALL_DESC" not in t:
         "        cJSON_AddItemToObject(set_optional, \"set\", set_param);\n"
         "        bool_param = cJSON_CreateObject(); cJSON_AddStringToObject(bool_param, \"type\", \"boolean\"); cJSON_AddStringToObject(bool_param, \"description\", \"Run the 3-tap touch calibration on the screen.\");\n"
         "        cJSON_AddItemToObject(set_optional, \"calibrate\", bool_param);\n"
+        "        bool_param = cJSON_CreateObject(); cJSON_AddStringToObject(bool_param, \"type\", \"boolean\"); cJSON_AddStringToObject(bool_param, \"description\", \"Also return the running applet's JSON.\");\n"
+        "        cJSON_AddItemToObject(set_optional, \"doc\", bool_param);\n"
         "        add_command(commands, \"applet.state\", MUSECORDER_STATE_DESC, nullptr, set_optional);\n"
         "        cJSON *name_required = cJSON_CreateObject();\n"
         "        cJSON_AddItemToObject(name_required, \"name\", string_param(\"The event name (a key under the applet's on object).\"));\n"
@@ -222,7 +224,7 @@ if "CYD_STRIPE_CELLS" not in t:
 # --- CYD: smaller TX reserve (no tunnel on these boards; the image fetcher keeps this much DMA memory free) ---
 nt = root / "main" / "noise_tunnel_internal.h"; t = nt.read_text()
 if "CYD_TX_RESERVE" not in t:
-    t = t.replace("#define NOISE_TX_DMA_RESERVE_BYTES (16 * 1024)\n", "#include \"sdkconfig.h\"\n#if (CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796) && !CONFIG_HOMEHUB_TUNNEL   /* CYD_TX_RESERVE */\n#define NOISE_TX_DMA_RESERVE_BYTES (6 * 1024)\n#else\n#define NOISE_TX_DMA_RESERVE_BYTES (16 * 1024)\n#endif\n", 1)
+    t = t.replace("#define NOISE_TX_DMA_RESERVE_BYTES (16 * 1024)\n", "#include \"sdkconfig.h\"\n#if (CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796) && !CONFIG_HOMEHUB_TUNNEL   /* CYD_TX_RESERVE */\n#define NOISE_TX_DMA_RESERVE_BYTES (4 * 1024)\n#else\n#define NOISE_TX_DMA_RESERVE_BYTES (16 * 1024)\n#endif\n", 1)
     if "CYD_TX_RESERVE" not in t: sys.exit("apply.py: tx reserve anchor not found")
     nt.write_text(t); print("  patched main/noise_tunnel_internal.h (6 KB TX reserve on CYD boards)")
 
@@ -266,3 +268,10 @@ if "app_touch_short_press" not in t:
                   'static void on_button_long_press(void) {\n    reset_setup_from_control("button long-press");\n}\n#if CONFIG_HOMEHUB_MUSECORDER\nvoid app_touch_short_press(void) { on_button_short_press(); }   // touchscreen stand-ins for the BOOT button\nvoid app_touch_long_press(void) { on_button_long_press(); }\n#endif\n', 1)
     if "app_touch_short_press" not in t: sys.exit("apply.py: long-press anchor not found")
     ap3.write_text(t); print("  patched main/app.c (touch stand-ins for BOOT)")
+
+# --- CYD: smaller fetch reserve (the VM image route keeps TX reserve + stack + rows + this; 4 KB left no room for a chunk) ---
+imf = root / "main" / "image_fetch.c"; t = imf.read_text()
+if "CYD_FETCH_RESERVE" not in t:
+    t = t.replace("#define FETCH_RESERVE_BYTES (4 * 1024)\n", "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796   /* CYD_FETCH_RESERVE */\n#define FETCH_RESERVE_BYTES (2 * 1024)\n#else\n#define FETCH_RESERVE_BYTES (4 * 1024)\n#endif\n", 1)
+    if "CYD_FETCH_RESERVE" not in t: sys.exit("apply.py: fetch reserve anchor not found")
+    imf.write_text(t); print("  patched main/image_fetch.c (2 KB fetch reserve on CYD boards)")
