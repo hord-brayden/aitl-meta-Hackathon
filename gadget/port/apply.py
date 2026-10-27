@@ -118,3 +118,12 @@ if "CYD_SMALL_SESSION" not in t:
                   "#if (SMALL_CONTROL_SESSION && CONFIG_MUSE_BOARD_AI_PASSPORT) || CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796\n#define WS_RX_BUF_SIZE (SVC_FRAME_SCRATCH + 1024)", 1)
     if "CYD_SMALL_SESSION" not in t: sys.exit("apply.py: noise_control anchors not found")
     n.write_text(t); print("  patched main/noise_control.cpp (small control-session buffers on CYD boards)")
+
+# --- CYD: your Muse as the status-screen sprite (gadget/port/avatar/happy_anim.c/.h from gadget/port/gen_avatar_anim.py) ---
+av = pathlib.Path(__file__).resolve().parent / "avatar"
+for name in ("happy_anim.c", "happy_anim.h"):
+    srcf = av / name
+    if srcf.exists():
+        dst = root / "avatar" / name
+        if not dst.exists() or dst.read_bytes() != srcf.read_bytes():
+            dst.write_bytes(srcf.read_bytes()); print(f"  copied avatar/{name} (your Muse's sprite)")
