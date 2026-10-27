@@ -20,9 +20,11 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
+extern "C" {   // Meta's C headers without C++ guards
 #include "led_status.h"
-#include "noise_control.h"
 #include "pixel_font.h"
+}
+#include "noise_control.h"
 
 static const char *TAG = "musecorder";
 
