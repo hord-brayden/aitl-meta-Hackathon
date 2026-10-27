@@ -28,7 +28,7 @@ extern "C" {   // Meta's C headers without C++ guards
 
 static const char *TAG = "musecorder";
 
-#define MC_MAX_APPLET_BYTES 6144
+#define MC_MAX_APPLET_BYTES 4096
 #define MC_MAX_LOG 12
 #define MC_TICK_MS 100
 #define MC_HTTP_REPLY_MAX 384
@@ -176,7 +176,8 @@ static bool pinAllowed(int pin) {
 // ---------------------------------------------------------------- actions
 static void runActions(cJSON *list, int depth);
 
-static void doHttp(cJSON *h) {
+struct HttpJob { cJSON *h; SemaphoreHandle_t done; };
+static void doHttpSync(cJSON *h) {
     const char *url = cJSON_GetStringValue(cJSON_GetObjectItem(h, "url")); if (!url) { logf("http: no url"); return; }
     cJSON *m = cJSON_GetObjectItem(h, "method"); const char *method = cJSON_IsString(m) ? m->valuestring : "GET";
     std::string body; cJSON *json = cJSON_GetObjectItem(h, "json");
@@ -206,6 +207,12 @@ static void doHttp(cJSON *h) {
     if (const char *to = cJSON_GetStringValue(cJSON_GetObjectItem(h, "to"))) { while (!reply.empty() && (reply.back() == '\n' || reply.back() == '\r')) reply.pop_back(); s_state[to] = Value::S(reply); }
 }
 
+static void httpWorker(void *arg) { HttpJob *j = (HttpJob *)arg; doHttpSync(j->h); xSemaphoreGive(j->done); vTaskDelete(nullptr); }
+static void doHttp(cJSON *h) {
+    HttpJob job = {h, xSemaphoreCreateBinary()}; if (!job.done) return;
+    if (xTaskCreate(httpWorker, "mc_http", 7168, &job, 3, nullptr) != pdPASS) { logf("http: no memory for worker"); vSemaphoreDelete(job.done); return; }
+    xSemaphoreTake(job.done, pdMS_TO_TICKS(20000)); vSemaphoreDelete(job.done);
+}
 static void vmWriteCb(void *ctx, int status, const uint8_t *data, size_t len, bool end) {
     (void)ctx; (void)data; (void)len;
     if (status < 0) logf("vm.write failed"); else if (end) logf("vm.write -> %d", status);
@@ -269,7 +276,7 @@ static void runActions(cJSON *list, int depth) { cJSON *a = nullptr; cJSON_Array
 static void fire(const char *name) { if (!s_app) return; cJSON *on = cJSON_GetObjectItem(s_app, "on"); if (!on) return; cJSON *h = cJSON_GetObjectItem(on, name); if (h) runActions(h, 0); }
 
 // ---------------------------------------------------------------- screen
-#define STRIP_ROWS 8
+#define STRIP_ROWS 4
 static uint16_t *s_strip = nullptr;   // s_screen_w * STRIP_ROWS
 
 static inline uint16_t be565(uint8_t r, uint8_t g, uint8_t b) { uint16_t v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); return (uint16_t)((v >> 8) | (v << 8)); }
@@ -356,6 +363,7 @@ static char *loadApplet() {
 static void stopApplet(bool restoreScreen) {
     if (s_app) { fire("stop"); cJSON_Delete(s_app); s_app = nullptr; }
     s_timers.clear(); s_watches.clear(); s_state.clear(); s_running = false; s_exit = false; s_cleared = false;
+    free(s_strip); s_strip = nullptr;
     if (restoreScreen) led_status_show_animation();
 }
 static bool startApplet(cJSON *doc, bool fresh) {
@@ -373,6 +381,7 @@ static bool startApplet(cJSON *doc, bool fresh) {
             if (pinAllowed(pin) && s_watches.size() < 4) { gpio_reset_pin((gpio_num_t)pin); gpio_set_direction((gpio_num_t)pin, GPIO_MODE_INPUT); if (pin < 34) gpio_set_pull_mode((gpio_num_t)pin, GPIO_PULLUP_ONLY); s_watches.push_back({pin, mode, gpio_get_level((gpio_num_t)pin), k}); }
         }
     }
+    if (s_screen_w > 0 && !s_strip) s_strip = (uint16_t *)malloc(s_screen_w * STRIP_ROWS * sizeof(uint16_t));
     s_running = true; s_dirty_screen = true;
     logf("applet %s started", s_app_id.c_str());
     fire("start");
@@ -405,9 +414,7 @@ static void tickTask(void *) {
 extern "C" void musecorder_init(void) {
     s_lock = xSemaphoreCreateMutex();
     if (!led_status_display_info(&s_screen_w, &s_screen_h)) { s_screen_w = 0; }
-    if (s_screen_w > 0) s_strip = (uint16_t *)malloc(s_screen_w * STRIP_ROWS * sizeof(uint16_t));
-    if (!s_strip) s_screen_w = 0;
-    xTaskCreate(tickTask, "musecorder", 6144, nullptr, 3, nullptr);
+    xTaskCreate(tickTask, "musecorder", 4096, nullptr, 3, nullptr);
     ESP_LOGI(TAG, "ready (%dx%d)", s_screen_w, s_screen_h);
 }
 extern "C" void musecorder_vm_connected(void) { s_vm_up = true; }

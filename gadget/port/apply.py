@@ -70,7 +70,7 @@ if MARK not in c.read_text():
 #define LCD_V_RES        480
 #define LCD_X_GAP        0
 #define LCD_BAR_ROWS     16
-#define LCD_ANIM_SCALE   5
+#define LCD_ANIM_SCALE   4
 #define LCD_DOT_MARGIN   8
 #define LCD_BUF_CAPS     MALLOC_CAP_DMA
 #endif

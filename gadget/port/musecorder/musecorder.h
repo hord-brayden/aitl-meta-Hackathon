@@ -18,21 +18,13 @@ void musecorder_vm_connected(void);                          // control session 
 
 // Command descriptions advertised to Muse in link.register (keep the total under 8 KB).
 #define MUSECORDER_INSTALL_DESC \
-    "Install and run a tool ('applet') on this gadget. Pass the applet as the json string parameter. The applet " \
-    "is a JSON object: {\"id\":\"door-tally\",\"name\":\"Door Tally\",\"state\":{\"count\":0},\"persist\":[\"count\"]," \
-    "\"screen\":[{\"text\":\"Door A\"},{\"big\":\"${count}\"},{\"bar\":\"${count}\",\"max\":100},{\"text\":\"BOOT = +1\"}]," \
-    "\"on\":{\"boot:press\":[{\"inc\":\"count\"}],\"every:300\":[{\"http\":{\"method\":\"POST\",\"url\":\"https://...\"," \
-    "\"json\":{\"count\":\"${count}\"}}}],\"start\":[{\"log\":\"ready\"}]}}. " \
-    "screen items: text (small line), big (large line), bar (value, max), gap (pixels). Strings may contain ${expr}: " \
-    "state keys, numbers, 'strings', + - * / %, comparisons, && || !, and len(), int(), round(), abs(), min(), max(), " \
-    "pad(v,width), upper(), lower(), clock() (HH:MM), hhmmss(seconds), random(a,b). " \
-    "on events: start, boot:press, every:SECONDS, gpio:PIN:rise|fall|change (pins 4,16,17,21,22,25,26,32,34,35,36,39; 34-39 input only), " \
-    "and custom names fired with applet.event. actions: {\"set\":{\"k\":\"${expr}\"}}, {\"inc\":\"k\",\"by\":1}, {\"dec\":\"k\"}, " \
-    "{\"toggle\":\"k\"}, {\"log\":\"text\"}, {\"gpio.write\":{\"pin\":22,\"value\":1}}, {\"gpio.read\":{\"pin\":34,\"to\":\"k\"}}, " \
-    "{\"led\":\"#00ff00\"}, {\"http\":{\"method\":\"POST\",\"url\":\"...\",\"json\":{...},\"to\":\"k\"}} (response text into state k), " \
-    "{\"vm.write\":{\"path\":\"musecorder/tally.log\",\"text\":\"${count}\\n\",\"append\":true}} (writes a file on this VM you can read), " \
-    "{\"if\":\"${expr}\",\"then\":[...],\"else\":[...]}, {\"exit\":true}. Keep the applet under 6 KB. Replaces any running applet; " \
-    "applet.remove restores the status screen. Returns the applet's state."
+    "Install and run a small JSON tool (applet) on this gadget; json = the applet object. Example: " \
+    "{\"id\":\"tally\",\"name\":\"Door Tally\",\"state\":{\"n\":0},\"persist\":[\"n\"]," \
+    "\"screen\":[{\"text\":\"Door A\"},{\"big\":\"${n}\"},{\"bar\":\"${n}\",\"max\":100}]," \
+    "\"on\":{\"boot:press\":[{\"inc\":\"n\"}],\"every:300\":[{\"vm.write\":{\"path\":\"musecorder/tally.log\",\"text\":\"${n}\\n\",\"append\":true}}]}}. " \
+    "Events: start, boot:press, every:SECONDS, gpio:PIN:rise|fall|change (pins 4 16 17 21 22 25 26 32 34-39), custom names via applet.event. " \
+    "Actions: set{k:v}, inc/dec/toggle k, log, led #rrggbb, gpio.write{pin,value}, gpio.read{pin,to}, vm.write{path,text,append} (file on this VM), " \
+    "http{method,url,json,to} (may fail: little RAM), if{if,then,else}, exit. ${expr}: state keys, math, comparisons, len int round pad clock hhmmss random. Under 4 KB."
 #define MUSECORDER_REMOVE_DESC "Stop and delete the running applet and bring back the status screen."
 #define MUSECORDER_STATE_DESC \
     "Read the running applet: its id, state values and the last log lines. Optional set: an object of state keys to assign first."
