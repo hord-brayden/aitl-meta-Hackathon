@@ -331,11 +331,13 @@ struct Cal { bool valid; int swap, x0, x1, y0, y1; };   // raw -> screen: sx = (
 static Cal s_cal = {false, 0, 0, 0, 0, 0};
 static bool s_touch_ok = false;
 static int s_raw_x = 0, s_raw_y = 0;
+static uint32_t s_ticks = 0, s_touch_err = 0;
 #if MC_TOUCH_XPT2046
 static spi_device_handle_t s_tdev = nullptr;
 static int xptRead(uint8_t cmd) {
     spi_transaction_t t = {}; t.length = 24; t.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_USE_RXDATA; t.tx_data[0] = cmd;
-    if (spi_device_polling_transmit(s_tdev, &t) != ESP_OK) return -1;
+    esp_err_t e = spi_device_polling_transmit(s_tdev, &t);
+    if (e != ESP_OK) { if (s_touch_err++ == 0) ESP_LOGW(TAG, "touch: spi %s", esp_err_to_name(e)); return -1; }
     return ((t.rx_data[1] << 8) | t.rx_data[2]) >> 3;
 }
 static bool touchInit() {
@@ -595,7 +597,7 @@ static FILE *s_sd_draw_fp = nullptr;
 static void sdDrawDone(const image_fetch_result_t *r, void *) {
     if (s_sd_draw_fp) { fclose(s_sd_draw_fp); s_sd_draw_fp = nullptr; }
     mc_sd_unmount();
-    xSemaphoreTake(s_lock, portMAX_DELAY); logf("sd.draw %s%s", r->ok ? "ok " : "failed: ", r->ok ? r->format : r->message); xSemaphoreGive(s_lock);
+    xSemaphoreTake(s_lock, portMAX_DELAY); logf("sd.draw %s%s (free %u, ticks %u)", r->ok ? "ok " : "failed: ", r->ok ? r->format : r->message, (unsigned)esp_get_free_heap_size(), (unsigned)s_ticks); xSemaphoreGive(s_lock);
 }
 static bool sdDraw(const std::string &file, int row) {   // under s_lock
     if (s_sd_draw_fp) { logf("sd.draw: busy"); return false; }
@@ -985,6 +987,7 @@ static void tickTask(void *) {
         vTaskDelay(pdMS_TO_TICKS(MC_TICK_MS));
         xSemaphoreTake(s_lock, portMAX_DELAY);
         int64_t now = esp_timer_get_time();
+        s_ticks++;
         touchTick();
         if (s_tone_on && now >= s_tone_until) toneNext(now);
         if (s_running) {
@@ -1037,6 +1040,10 @@ static cJSON *statePayload() {
     cJSON *lg = cJSON_CreateArray(); for (auto &l : s_log) cJSON_AddItemToArray(lg, cJSON_CreateString(l.c_str())); cJSON_AddItemToObject(p, "log", lg);
     cJSON *ids = cJSON_CreateArray(); for (auto &id : storeIds()) cJSON_AddItemToArray(ids, cJSON_CreateString(id.c_str())); cJSON_AddItemToObject(p, "stored", ids);
     cJSON_AddBoolToObject(p, "touch", s_touch_ok); cJSON_AddBoolToObject(p, "touch_calibrated", s_cal.valid);
+    cJSON_AddNumberToObject(p, "ticks", (double)s_ticks); cJSON_AddNumberToObject(p, "touch_errors", (double)s_touch_err);
+#if MC_TOUCH_XPT2046
+    cJSON_AddNumberToObject(p, "pen_irq", gpio_get_level(GPIO_NUM_36));
+#endif
     cJSON_AddNumberToObject(p, "free", (double)esp_get_free_heap_size());
     cJSON *r = cJSON_CreateObject(); cJSON_AddBoolToObject(r, "ok", true); cJSON_AddItemToObject(r, "payload", p);
     return r;
