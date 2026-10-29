@@ -201,6 +201,8 @@ static bool s_vm_up = false;
 static volatile int s_vm_gen = 0;            // bumps on every link.register ack
 static volatile bool s_starved = false;      // the control session could not allocate its buffers (noise_control.cpp hook)
 static std::string s_relaunch; static int s_relaunch_gen = 0;   // applet paused for the link, to relaunch when it is back
+static bool s_starve_pause = false;          // the current pause is a starvation pause (link fighting for RAM), not the boot defer
+static int64_t s_starve_since = 0;           // when the starvation pause began, for the reboot-to-recover fallback
 struct Timer { int period_ms; int64_t next; const char *key; };
 static std::vector<Timer> s_timers;
 struct Watch { int pin; int mode; int last; const char *key; };   // mode 0 rise 1 fall 2 change
@@ -1056,15 +1058,30 @@ static void tickTask(void *) {
         xSemaphoreTake(s_lock, portMAX_DELAY);
         int64_t now = esp_timer_get_time();
         s_ticks++;
-        if (s_starved) {   // the Muse link beats the applet: free its RAM now, bring it back once the link registers again
+        if (s_starved) {   // the Muse link could not allocate its buffers: free the applet's RAM so the link can recover
             s_starved = false;
-            if (s_running) { s_relaunch = s_app_id; s_relaunch_gen = s_vm_gen; logf("applet %s paused: the Muse link needs the RAM; it relaunches once linked", s_app_id.c_str()); stopApplet(true); }
-            else logf("Muse link short of RAM (free %u)", (unsigned)esp_get_free_heap_size());
+            if (s_running) {   // first time: pause the applet and start the recovery clock
+                s_relaunch = s_app_id; s_relaunch_gen = s_vm_gen; s_starve_pause = true; s_starve_since = now;
+                logf("applet %s paused: the Muse link needs the RAM; it relaunches once the link is back", s_app_id.c_str());
+                stopApplet(true);
+            } else if (s_starve_pause && now - s_starve_since > 90000000) {
+                // Still starving 90 s after freeing the applet: freeing does not defragment the heap, so only a
+                // fresh heap cures it. A soft reboot keeps pairing and the stored applet; the boot defer then lets
+                // the link allocate first and the applet relaunches after. This is recovery, not a reflash.
+                logf("Muse link still cannot allocate 90s after pausing the applet; rebooting to recover");
+                vTaskDelay(pdMS_TO_TICKS(50)); esp_restart();
+            }
         }
-        if (!s_relaunch.empty() && !s_running && !s_launcher && (s_vm_gen != s_relaunch_gen || now - boot_us > 30000000)) {
-            std::string id = s_relaunch; s_relaunch.clear();
-            logf("starting applet %s (%s)", id.c_str(), s_vm_gen != s_relaunch_gen ? "Muse linked" : "no link after 30s");
-            if (!startStored(id, false)) logf("stored applet %s missing", id.c_str());
+        // Relaunch the held applet. A starvation pause waits for a real link.register ack only (never a timer, or it
+        // would re-starve the link in a loop). The boot defer additionally starts after 30 s if no link ever comes (offline).
+        if (!s_relaunch.empty() && !s_running && !s_launcher) {
+            bool linked = s_vm_gen != s_relaunch_gen;
+            bool offline_boot = !s_starve_pause && now - boot_us > 30000000;
+            if (linked || offline_boot) {
+                std::string id = s_relaunch; s_relaunch.clear(); s_starve_pause = false;
+                logf("starting applet %s (%s)", id.c_str(), linked ? "Muse linked" : "no link after 30s");
+                if (!startStored(id, false)) logf("stored applet %s missing", id.c_str());
+            }
         }
         touchTick();
         if (s_tone_on && now >= s_tone_until) toneNext(now);
