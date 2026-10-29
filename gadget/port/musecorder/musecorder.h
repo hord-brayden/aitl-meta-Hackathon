@@ -16,6 +16,7 @@ void musecorder_init(void);                                  // after led_status
 bool musecorder_on_tap(void);                                // BOOT tap: true when a running applet consumed it
 cJSON *musecorder_command(const char *command, cJSON *params);   // applet.* commands; NULL if not ours
 void musecorder_vm_connected(void);                          // control session is up (vm.write may be used)
+void musecorder_session_starved(void);                       // the control session could not allocate its buffers: a running applet is paused and relaunched once linked
 void musecorder_screen_reset(void);                          // the status screen was taken back (display.show_animation): repaint the applet
 bool musecorder_console_command(const char *line);           // serial ">wifi=..." lines (sdk_token_console.c hands over what it does not own)
 
@@ -24,21 +25,22 @@ bool musecorder_console_command(const char *line);           // serial ">wifi=..
     "Install and run a small JSON tool (applet) on this gadget's touchscreen; json = the applet object (under 4 KB; up to 5 stay stored, id alone restarts a stored one). Example: " \
     "{\"id\":\"tally\",\"name\":\"Door Tally\",\"state\":{\"n\":0},\"persist\":[\"n\"]," \
     "\"screen\":[{\"text\":\"Door A\"},{\"big\":\"${n}\"},{\"bar\":\"${n}\",\"max\":100},{\"buttons\":[{\"label\":\"+1\",\"event\":\"up\"},{\"label\":\"-1\",\"event\":\"down\"}]},{\"button\":\"Post\",\"event\":\"post\"}]," \
-    "\"on\":{\"up\":[{\"inc\":\"n\"},{\"tone\":{\"freq\":880,\"ms\":60}}],\"down\":[{\"dec\":\"n\"}],\"boot:press\":[{\"inc\":\"n\"}],\"every:300\":[{\"muse.say\":\"tally ${n}\"}]}}. " \
+    "\"on\":{\"up\":[{\"inc\":\"n\"}],\"down\":[{\"dec\":\"n\"}],\"post\":[{\"muse.say\":\"tally ${n}\"}],\"every:300\":[{\"muse.say\":\"tally ${n}\"}]}}. " \
     "Screen items: text, big, bar{max}, gap, button{event,color}, buttons[{label,event}], canvas (rest of the screen is yours via draw.*). " \
     "Events: start, stop, boot:press, touch (sets touch.x touch.y; also touch:move), every:SECONDS, gpio:PIN:rise|fall|change (pins 4 16 17 21 22 25 26 32 34-39), custom names via applet.event. " \
-    "Actions: set{k:v}, inc/dec/toggle k, log, if{if,then,else}, exit, led #rrggbb, tone{freq|freq:[..],ms} (speaker), pwm{pin,duty,freq}, gpio.write{pin,value}, gpio.read{pin,to}, adc.read{pin,to} (36 39 32 34 35), " \
-    "i2c.scan{to}, i2c.read{addr,reg|cmd:[..],wait,len,to} (bytes land in to.0..to.n), i2c.write{addr,reg|cmd,data} (pins from applet i2c{sda,scl}; the 4-pin header is sda 32 scl 25), draw.rect{x,y,w,h,color}, draw.text{x,y,text,scale,color}, clear, sd.append{file,text}, sd.read{file,to,tail}, sd.draw{file}, sd.fetch{path,file} (microSD), " \
-    "muse.say \"text\" (posts into your chat with this Muse), muse.ask{text,to}, http{method,url,json,to} (may fail: little RAM), vm.write{path,text,append} (refused unless the credential has the scope). " \
-    "${expr}: state keys, math, comparisons, functions len int floor ceil round abs min max pad(x,w,fill) mmss(seconds)=m:ss hhmmss clock random(lo,hi) uptime time. The name is drawn as the title automatically. Screen is 320x480 (y 28-452 usable). Holding a finger on the screen for 1 s opens the launcher (stored applets)."
+    "Actions: set{k:v}, inc/dec/toggle k, log, if{if,then,else}, exit, led #rrggbb, tone{freq|freq:[..],ms}, pwm{pin,duty,freq}, gpio.write{pin,value}, gpio.read{pin,to}, adc.read{pin,to} (36 39 32 34 35), " \
+    "i2c.scan{to}, i2c.read{addr,reg|cmd:[..],wait,len,to} (bytes land in to.0..to.n), i2c.write{addr,reg|cmd,data,wait} (wait = ms pause; pins from applet i2c{sda,scl}, the 4-pin header is sda 32 scl 25), " \
+    "draw.rect{x,y,w,h,color}, draw.text{x,y,text,scale,color}, clear, sd.append{file,text}, sd.read{file,to,tail}, sd.draw{file}, sd.fetch{path,file} (microSD), " \
+    "muse.say \"text\" (posts into your chat with this Muse), muse.ask{text,to}, http{method,url,json,to} (little RAM), vm.write{path,text,append} (needs scope). " \
+    "${expr}: state keys, math, comparisons, functions len int floor ceil round abs min max pad(x,w,fill) mmss(seconds)=m:ss hhmmss clock random(lo,hi) uptime time. The name is the title. Screen 320x480 (y 28-452 usable); a 1 s finger hold opens the launcher."
 #define MUSECORDER_REMOVE_DESC "Stop the running applet and bring back the status screen (it stays stored). id: delete that stored applet. all:true deletes every stored applet."
 #define MUSECORDER_STATE_DESC \
-    "Read the running applet: id, state values, last log lines, stored applet ids, free RAM. Optional set: an object of state keys to assign first; doc:true also returns the applet JSON (to edit and reinstall); calibrate:true runs the touch setup on the screen."
+    "Read the running applet: id, state, last log lines, stored ids, free RAM. set: an object of state keys to assign first; doc:true also returns the applet JSON (edit and reinstall); calibrate:true runs the touch setup."
 #define MUSECORDER_EVENT_DESC "Fire a custom event by name on the running applet (its on.<name> actions run)."
-#define MUSECORDER_WIFI_ADD_DESC "Remember another Wi-Fi network on this gadget (up to 8); it joins whichever saved network is nearby after a reboot or when the current one drops. Ask the user for the password; it is stored on the device only."
+#define MUSECORDER_WIFI_ADD_DESC "Remember another Wi-Fi network (up to 8); the gadget joins whichever saved network is nearby. Ask the user for the password; it stays on the device."
 #define MUSECORDER_WIFI_FORGET_DESC "Forget a saved Wi-Fi network by ssid."
 #define MUSECORDER_WIFI_LIST_DESC "List the Wi-Fi networks this gadget remembers (names only)."
-#define MUSECORDER_SD_DESC "microSD card. op=list (files in folder mc) | read{file,tail} (last bytes, default 384) | append{file,text} (log a line) | delete{file} | fetch{path,file} (copy a file from this VM, e.g. workspace/cat.jpg, onto the card; background, a few seconds; applet.state log says sd.fetch <file>: N bytes) | draw{file,row} (show a baseline JPEG from the card: offline, no memory wall)."
+#define MUSECORDER_SD_DESC "microSD card. op=list (files in folder mc) | read{file,tail} (last bytes, default 384) | append{file,text} | delete{file} | fetch{path,file} (copy a file from this VM, e.g. workspace/cat.jpg, to the card in the background; the applet.state log reports sd.fetch <file>: N bytes) | draw{file,row} (show a baseline JPEG from the card, offline)."
 
 #ifdef __cplusplus
 }

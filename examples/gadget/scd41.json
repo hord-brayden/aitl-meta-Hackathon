@@ -1,7 +1,7 @@
 {"id":"co2","name":"CO2 meter","i2c":{"sda":32,"scl":25},"state":{"co2":0,"t":0,"rh":0,"peak":0,"n":0},
  "screen":[{"text":"SCD41  ppm"},{"big":"${co2}"},{"text":"${t} C   ${rh} %RH"},{"bar":"${co2}","max":2000},{"text":"peak ${peak}  reads ${n}"},
            {"buttons":[{"label":"reset peak","event":"reset"},{"label":"to Muse","event":"post"}]}],
- "on":{"start":[{"i2c.write":{"addr":98,"cmd":[33,177]}},{"log":"scd41 periodic measurement started"}],
+ "on":{"start":[{"i2c.write":{"addr":98,"cmd":[63,134],"wait":500}},{"i2c.write":{"addr":98,"cmd":[33,177]}},{"log":"scd41 periodic measurement started"}],
        "stop":[{"i2c.write":{"addr":98,"cmd":[63,134]}}],
        "every:5":[{"i2c.read":{"addr":98,"cmd":[236,5],"wait":2,"len":9,"to":"m"}},
                   {"if":"${m.0*256+m.1 > 0}","then":[

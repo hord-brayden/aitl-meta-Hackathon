@@ -204,6 +204,11 @@ if "MUSECORDER_INSTALL_DESC" not in t:
     t = t.replace('    ESP_LOGI(TAG, "link.register acked; tunnel may open");',
                   '    ESP_LOGI(TAG, "link.register acked; tunnel may open");\n#if CONFIG_HOMEHUB_MUSECORDER\n    musecorder_vm_connected();\n#endif', 1)
     if "musecorder_vm_connected" not in t: sys.exit("apply.py: register-ack anchor not found")
+    # CYD_STARVED: no PSRAM, so a running applet can leave too little RAM for the ~62 KB of session buffers; tell the
+    # applet runtime, which pauses the applet and relaunches it once the link registers again (the Muse link always wins).
+    t = t.replace('        ESP_LOGE(TAG, "session buffer alloc failed");\n',
+                  '        ESP_LOGE(TAG, "session buffer alloc failed");\n#if CONFIG_HOMEHUB_MUSECORDER\n        musecorder_session_starved();   /* CYD_STARVED */\n#endif\n', 1)
+    if "musecorder_session_starved" not in t: sys.exit("apply.py: session-buffer anchor not found")
     nc.write_text(t); print("  patched main/noise_control.cpp (applet.* registered)")
 ap = root / "main" / "app.c"; t = ap.read_text()
 if "musecorder_command" not in t:

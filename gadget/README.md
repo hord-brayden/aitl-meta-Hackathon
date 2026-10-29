@@ -82,7 +82,7 @@ An applet: `screen` rows (`text`, `big`, `bar{max}`, `gap`, `button{event,color}
 `canvas`), `on` handlers (`start`, `stop`, `boot:press`, `touch`, `touch:move`, `every:SECONDS`,
 `gpio:PIN:rise|fall|change`, custom names) and actions: `set inc dec toggle log if exit`, `led`, `tone` (speaker,
 one note or a sequence), `pwm`, `gpio.read/write`, `adc.read`, `i2c.scan/read/write` (bus pins from the applet's
-`i2c{sda,scl}`), `draw.rect`, `draw.text`, `clear`, `http`, `muse.say`, `muse.ask`, `vm.write`. `${expr}` templates
+`i2c{sda,scl}`; `cmd:[..]` sends a multi-byte command and `wait` pauses in ms, enough for Sensirion sensors such as the SCD41), `draw.rect`, `draw.text`, `clear`, `http`, `muse.say`, `muse.ask`, `vm.write`. `${expr}` templates
 evaluate against `state` (math, comparisons, `len int round pad clock hhmmss random uptime`). Examples to paste
 into the chat: [`../examples/gadget/`](../examples/gadget/).
 
@@ -94,6 +94,13 @@ screen", "Touch setup" (three taps calibrate axis order, direction and scale; st
 (`partitions_cyd24_4mb.csv`, 128 KB at the end of flash), never in Meta's `nvs` with the pairing data. Flashing a
 build with this table over the old one keeps the pairing; the runtime moves an applet from the old location on
 first boot.
+
+**A bad applet cannot take the device down.** The applet runs in its own task; an applet that crashes the
+firmware is left stored but not relaunched after the reset, and the serial console has `>applet=stop`
+(clear the autostart), `>applet=list` and `>applet=dump[:id]` (print the stored JSON). The classic ESP32 has no
+PSRAM, so a large applet can leave too little RAM for the Muse control session (about 62 KB of buffers next
+to TLS): when that happens the runtime pauses the applet, lets the link register, then relaunches it with its
+saved state. The link to your Muse always wins, so the device never goes dark from the phone.
 
 **Talking back.** `muse.say` posts a message into your chat with your Muse (the chat route Meta's own boards use), so
 "door count hit 50" shows up in the app and Muse can act on it. `muse.ask` additionally reads the reply back onto

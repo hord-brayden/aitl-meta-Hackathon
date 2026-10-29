@@ -198,6 +198,9 @@ static bool s_dirty_screen = false, s_dirty_state = false, s_cleared = false, s_
 static int64_t s_last_save = 0;
 static int s_screen_w = 0, s_screen_h = 0;
 static bool s_vm_up = false;
+static volatile int s_vm_gen = 0;            // bumps on every link.register ack
+static volatile bool s_starved = false;      // the control session could not allocate its buffers (noise_control.cpp hook)
+static std::string s_relaunch; static int s_relaunch_gen = 0;   // applet paused for the link, to relaunch when it is back
 struct Timer { int period_ms; int64_t next; const char *key; };
 static std::vector<Timer> s_timers;
 struct Watch { int pin; int mode; int last; const char *key; };   // mode 0 rise 1 fall 2 change
@@ -505,7 +508,7 @@ static void doI2c(const char *op, cJSON *a) {   // i2c.scan{to} i2c.read{addr,re
     cJSON *regj = cJSON_GetObjectItem(a, "reg"); uint8_t reg = (uint8_t)numOf(a, "reg", 0);
     uint8_t cmd[8]; int ncmd = 0;   // cmd:[..] = a multi-byte command (Sensirion style), written before the read with a `wait` ms pause
     cJSON *cj = cJSON_GetObjectItem(a, "cmd"); if (cJSON_IsArray(cj)) { cJSON *it = nullptr; cJSON_ArrayForEach(it, cj) { if (ncmd < 8) cmd[ncmd++] = (uint8_t)fromJson(it).asNum(); } } else if (regj) { cmd[0] = reg; ncmd = 1; }
-    int wait = clampi((int)numOf(a, "wait", cJSON_IsArray(cj) ? 2 : 0), 0, 1500);
+    int wait = clampi((int)numOf(a, "wait", cJSON_IsArray(cj) && !strcmp(op, "read") ? 2 : 0), 0, 1500);   // read: pause between command and read; write: pause after the write
     if (!strcmp(op, "read")) {
         int len = clampi((int)numOf(a, "len", 1), 1, 16); uint8_t buf[16]; esp_err_t e;
         if (ncmd && wait > 0) { e = i2c_master_transmit(d, cmd, ncmd, 100); if (e == ESP_OK) { vTaskDelay(pdMS_TO_TICKS(wait)); e = i2c_master_receive(d, buf, len, 100); } }
@@ -516,6 +519,7 @@ static void doI2c(const char *op, cJSON *a) {   // i2c.scan{to} i2c.read{addr,re
         uint8_t out[24]; int n = 0; for (int i = 0; i < ncmd && n < 24; i++) out[n++] = cmd[i];
         cJSON *it = nullptr; cJSON_ArrayForEach(it, cJSON_GetObjectItem(a, "data")) { if (n < 24) out[n++] = (uint8_t)fromJson(it).asNum(); }
         esp_err_t e = i2c_master_transmit(d, out, n, 100); if (e != ESP_OK) logf("i2c.write 0x%02x: %s", addr, esp_err_to_name(e));
+        else if (wait > 0) vTaskDelay(pdMS_TO_TICKS(wait));
     }
     i2c_master_bus_rm_device(d);
 }
@@ -900,7 +904,7 @@ static bool startApplet(cJSON *doc, bool fresh) {
     }
     ensureStrip();
     s_running = true; s_dirty_screen = true; s_launcher = false;
-    storeSet("run", s_app_id.c_str());
+    storeSet("run", s_app_id.c_str()); s_relaunch.clear();
     logf("applet %s started", s_app_id.c_str());
     fire("start");
     return true;
@@ -1051,6 +1055,12 @@ static void tickTask(void *) {
         xSemaphoreTake(s_lock, portMAX_DELAY);
         int64_t now = esp_timer_get_time();
         s_ticks++;
+        if (s_starved) {   // the Muse link beats the applet: free its RAM now, bring it back once the link registers again
+            s_starved = false;
+            if (s_running) { s_relaunch = s_app_id; s_relaunch_gen = s_vm_gen; logf("applet %s paused: the Muse link needs the RAM; it relaunches once linked", s_app_id.c_str()); stopApplet(true); }
+            else logf("Muse link short of RAM (free %u)", (unsigned)esp_get_free_heap_size());
+        }
+        if (!s_relaunch.empty() && !s_running && !s_launcher && s_vm_gen != s_relaunch_gen) { std::string id = s_relaunch; s_relaunch.clear(); if (!startStored(id, false)) logf("stored applet %s missing", id.c_str()); }
         touchTick();
         if (s_tone_on && now >= s_tone_until) toneNext(now);
         if (s_running) {
@@ -1080,7 +1090,8 @@ extern "C" void musecorder_init(void) {
     xTaskCreate(tickTask, "musecorder", 6144, nullptr, 3, nullptr);
     ESP_LOGI(TAG, "ready (%dx%d, touch %s, store %s)", s_screen_w, s_screen_h, s_touch_ok ? "yes" : "no", s_store_ok ? "ok" : "none");
 }
-extern "C" void musecorder_vm_connected(void) { s_vm_up = true; }
+extern "C" void musecorder_vm_connected(void) { s_vm_up = true; s_vm_gen = s_vm_gen + 1; }
+extern "C" void musecorder_session_starved(void) { s_starved = true; }
 extern "C" void musecorder_screen_reset(void) { s_cleared = false; s_dirty_screen = true; if (s_launcher) s_launcher = false; }
 static bool pressCb(bool pressed) {
     if (s_running && pressed) s_tap_pending = true;   // instant boot:press for the applet
@@ -1145,9 +1156,14 @@ static void i2cProbePins(int sda, int scl) {
     i2c_del_master_bus(bus); printf("@touch i2c %d/%d:%s\n", sda, scl, found.empty() ? " nothing" : found.c_str());
 }
 extern "C" bool musecorder_console_command(const char *line) {
-    if (!strncmp(line, "applet=", 7)) {   // >applet=stop clears the autostart (emergency exit from a bad applet); >applet=list
+    if (!strncmp(line, "applet=", 7)) {   // >applet=stop clears the autostart (emergency exit from a bad applet); >applet=list; >applet=dump[:id] prints the stored JSON
         const char *arg = line + 7;
         if (!strcmp(arg, "stop")) { xSemaphoreTake(s_lock, portMAX_DELAY); storeSet("run", nullptr); stopApplet(true); xSemaphoreGive(s_lock); printf("@applet stopped; autostart cleared\n"); }
+        else if (!strncmp(arg, "dump", 4)) {
+            std::string id = arg[4] == ':' ? arg + 5 : s_running ? s_app_id : ""; if (id.empty()) { char *r = storeGet("run", MC_MAX_ID + 1); if (r) { id = r; free(r); } }
+            char *txt = id.empty() ? nullptr : storeGet(key("a.", id).c_str(), MC_MAX_APPLET_BYTES);
+            if (txt) { printf("@applet %s %s\n", id.c_str(), txt); free(txt); } else printf("@applet no stored applet%s%s\n", id.empty() ? "" : " ", id.c_str());
+        }
         else { std::string ids; for (auto &i : storeIds()) ids += " " + i; printf("@applet stored:%s running:%s\n", ids.c_str(), s_running ? s_app_id.c_str() : "-"); }
         fflush(stdout); return true;
     }
