@@ -6,6 +6,7 @@
 # (gadgets.muse.ai > Account > SDK tokens). Without a token the build warns; you can send it later over serial.
 set -euo pipefail
 BOARD="${BOARD:-cyd24}"   # cyd24 = 2.4" ILI9341 board, cyd40 = Hosyond 4" ST7796 board
+TARGET=esp32; [ "$BOARD" = nano ] && TARGET=esp32s3   # Arduino Nano ESP32 (u-blox NORA-W106) is an ESP32-S3
 cd "$(dirname "$0")/.."
 REPO="$PWD"
 # The SDK clone lives OUTSIDE the repo: ESP-IDF's response files break on paths with spaces (this repo sits in iCloud),
@@ -27,5 +28,5 @@ else
   echo "SDK token: none in .env (MUSE_GADGET_SDK_TOKEN=...); the gadget will not pair until one is set (serial: >sdk_token=mgst_...)"
 fi
 cd "$SDK/esp32"
-idf.py -B build-$BOARD -DIDF_TARGET=esp32 -DSDKCONFIG=build-$BOARD/sdkconfig -DSDKCONFIG_DEFAULTS="$DEFAULTS" build 2>&1 | tail -25
-echo; echo "built: $SDK/esp32/build-$BOARD/muse-gadget.bin"; echo "flash: BOARD=$BOARD gadget/flash.sh /dev/cu.usbserial-110"
+idf.py -B build-$BOARD -DIDF_TARGET=$TARGET -DSDKCONFIG=build-$BOARD/sdkconfig -DSDKCONFIG_DEFAULTS="$DEFAULTS" build 2>&1 | tail -25
+echo; echo "built: $SDK/esp32/build-$BOARD/muse-gadget.bin"; echo "flash: BOARD=$BOARD gadget/flash.sh"

@@ -315,3 +315,126 @@ if "CYD_SD_SOURCE" not in t:
         if old not in t: sys.exit("apply.py: image_fetch.c anchor not found: " + old[:60])
         t = t.replace(old, new, 1)
     ic.write_text(t); print("  patched main/image_fetch.c (file source for sd.draw)")
+
+# --- SSD1306 mono OLED backend (Arduino Nano ESP32 and other S3 boards without a colour LCD) ---
+shutil.copy(here / "sdkconfig.nano", root / "devices" / "sdkconfig.nano")
+shutil.copy(here / "ssd1306.c", root / "main" / "ssd1306.c")
+shutil.copy(here / "ssd1306.h", root / "main" / "ssd1306.h")
+print("  copied devices/sdkconfig.nano, main/ssd1306.c, main/ssd1306.h")
+
+cm = root / "main" / "CMakeLists.txt"; t = cm.read_text()
+if '"ssd1306.c"' not in t:
+    t = t.replace('    "app.c"\n', '    "app.c"\n    "ssd1306.c"\n', 1); cm.write_text(t); print("  patched main/CMakeLists.txt (ssd1306.c)")
+
+kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
+if "HOMEHUB_LED_BACKEND_SSD1306_I2C" not in t:
+    t = t.replace("        config HOMEHUB_LED_BACKEND_SENSECAP_ST7701\n", (
+        "        config HOMEHUB_LED_BACKEND_SSD1306_I2C\n"
+        "            bool \"SSD1306 128x64 monochrome I2C OLED\"\n"
+        "            help\n"
+        "                A 0.96 inch 128x64 mono OLED on I2C (e.g. Arduino Nano ESP32). musecorder's\n"
+        "                colour drawing is thresholded to 1-bit; no esp_lcd colour panel.\n"
+        "\n"
+        "        config HOMEHUB_LED_BACKEND_SENSECAP_ST7701\n"), 1)
+    kc.write_text(t); print("  patched main/Kconfig.projbuild (SSD1306 backend)")
+
+ls = root / "main" / "led_status.c"; t = ls.read_text()
+if "SSD1306_I2C" not in t:
+    t = t.replace('#include "led_status.h"\n',
+        '#include "led_status.h"\n#if CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n#include "ssd1306.h"\n#include "pixel_font.h"\n#endif\n', 1)
+    branch = r'''#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C
+// Monochrome 128x64 I2C OLED (Arduino Nano ESP32 etc.). Self-contained: no esp_lcd
+// colour panel. musecorder draws RGB565 rects that ssd1306.c thresholds to 1-bit.
+#ifndef MC_OLED_SDA
+#define MC_OLED_SDA 11   /* Nano ESP32 A4 = GPIO11 */
+#endif
+#ifndef MC_OLED_SCL
+#define MC_OLED_SCL 12   /* Nano ESP32 A5 = GPIO12 */
+#endif
+#define MC_OLED_ADDR 0x3C
+static bool s_oled_image = false;          /* true while an image (musecorder) owns the screen */
+static char s_oled_state[16] = "boot";
+static char s_oled_title[48] = "";
+
+static void oled_text(int x, int y, int scale, const char *s) {
+    const int adv = PIXEL_FONT_WIDTH + 1;
+    for (int i = 0; s[i]; i++) {
+        unsigned char ch = (unsigned char)s[i];
+        if (ch < PIXEL_FONT_FIRST || ch > PIXEL_FONT_LAST) ch = '?';
+        const uint8_t *g = pixel_font[ch - PIXEL_FONT_FIRST];
+        for (int col = 0; col < PIXEL_FONT_WIDTH; col++) {
+            for (int row = 0; row < PIXEL_FONT_HEIGHT; row++) {
+                if (!((g[col] >> row) & 1)) continue;
+                for (int dy = 0; dy < scale; dy++) {
+                    for (int dx = 0; dx < scale; dx++) {
+                        ssd1306_px(x + col * scale + dx, y + row * scale + dy, true);
+                    }
+                }
+            }
+        }
+        x += adv * scale;
+    }
+}
+
+static int oled_text_w(const char *s, int scale) {
+    return (int)strlen(s) * (PIXEL_FONT_WIDTH + 1) * scale;
+}
+
+static void oled_status_screen(void) {
+    if (s_oled_image) return;
+    ssd1306_clear();
+    const char *title = s_oled_title[0] ? s_oled_title : "MUSECORDER";
+    int ts = oled_text_w(title, 2) <= SSD1306_W ? 2 : 1;
+    oled_text((SSD1306_W - oled_text_w(title, ts)) / 2, 4, ts, title);
+    int ss = oled_text_w(s_oled_state, 2) <= SSD1306_W ? 2 : 1;
+    oled_text((SSD1306_W - oled_text_w(s_oled_state, ss)) / 2, 34, ss, s_oled_state);
+    ssd1306_flush();
+}
+
+static void led_hw_set_color(rgb_t c) {
+    const char *w = 0;
+    if (c.r == 0 && c.g == 0 && c.b == 0) w = 0;              /* OFF: keep the last word */
+    else if (c.b > c.r && c.b > c.g) w = "wifi";              /* blue */
+    else if (c.g > c.r && c.g > c.b) w = "ready";             /* green */
+    else if (c.r > 0 && c.b > 0) w = "link";                 /* purple */
+    else if (c.r > 0 && c.g > 0) w = "setup";               /* orange/yellow */
+    else if (c.r > 0) w = "error";                           /* red */
+    if (w) { strncpy(s_oled_state, w, sizeof(s_oled_state) - 1); s_oled_state[sizeof(s_oled_state) - 1] = 0; }
+    oled_status_screen();
+}
+
+static void led_hw_set_connected(void) {
+    strncpy(s_oled_state, "LINKED", sizeof(s_oled_state) - 1);
+    s_oled_state[sizeof(s_oled_state) - 1] = 0;
+    oled_status_screen();
+}
+
+static void led_hw_set_title(const char *text) {
+    strncpy(s_oled_title, text ? text : "", sizeof(s_oled_title) - 1);
+    s_oled_title[sizeof(s_oled_title) - 1] = 0;
+    oled_status_screen();
+}
+
+static bool led_hw_init(void) {
+    if (!ssd1306_init(MC_OLED_SDA, MC_OLED_SCL, MC_OLED_ADDR)) return false;
+    ssd1306_clear();
+    oled_text((SSD1306_W - oled_text_w("MUSECORDER", 1)) / 2, 22, 1, "MUSECORDER");
+    oled_text((SSD1306_W - oled_text_w("booting", 1)) / 2, 38, 1, "booting");
+    ssd1306_flush();
+    return true;
+}
+
+'''
+    t = t.replace("#elif CONFIG_HOMEHUB_DISPLAY\nstatic esp_lcd_panel_handle_t s_panel = NULL;",
+                  branch + "#elif CONFIG_HOMEHUB_DISPLAY\nstatic esp_lcd_panel_handle_t s_panel = NULL;", 1)
+    t = t.replace("#if !CONFIG_HOMEHUB_DISPLAY\n#if !(CONFIG_HOMEHUB_LED_BACKEND_VOICE_RING",
+                  "#if !CONFIG_HOMEHUB_DISPLAY && !CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n#if !(CONFIG_HOMEHUB_LED_BACKEND_VOICE_RING", 1)
+    t = t.replace("#elif CONFIG_HOMEHUB_LED_BACKEND_MUSE && CONFIG_HOMEHUB_DISPLAY_COMMANDS\n    return muse_ui_image_size(width, height);",
+                  "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    if (!ssd1306_ready()) return false;\n    *width = SSD1306_W;\n    *height = SSD1306_H;\n    return true;\n#elif CONFIG_HOMEHUB_LED_BACKEND_MUSE && CONFIG_HOMEHUB_DISPLAY_COMMANDS\n    return muse_ui_image_size(width, height);", 1)
+    t = t.replace("#elif CONFIG_HOMEHUB_LED_BACKEND_MUSE && CONFIG_HOMEHUB_DISPLAY_COMMANDS\n    int w, h;",
+                  "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    return ssd1306_ready() ? 1 : 0;\n#elif CONFIG_HOMEHUB_LED_BACKEND_MUSE && CONFIG_HOMEHUB_DISPLAY_COMMANDS\n    int w, h;", 1)
+    t = t.replace("#elif CONFIG_HOMEHUB_LED_BACKEND_MUSE && CONFIG_HOMEHUB_DISPLAY_COMMANDS\n    return muse_ui_image_draw(x, y, w, h, pixels);",
+                  "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    if (!ssd1306_ready() || x < 0 || y < 0 || w <= 0 || h <= 0\n        || x + w > SSD1306_W || y + h > SSD1306_H) {\n        return false;\n    }\n    if (!s_oled_image) { s_oled_image = true; ssd1306_clear(); ssd1306_flush(); }\n    ssd1306_blit_rgb565(x, y, w, h, pixels);\n    ssd1306_flush_rows(y, y + h);\n    return true;\n#elif CONFIG_HOMEHUB_LED_BACKEND_MUSE && CONFIG_HOMEHUB_DISPLAY_COMMANDS\n    return muse_ui_image_draw(x, y, w, h, pixels);", 1)
+    t = t.replace("#elif CONFIG_HOMEHUB_LED_BACKEND_MUSE && CONFIG_HOMEHUB_DISPLAY_COMMANDS\n    muse_ui_image_hide();",
+                  "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    s_oled_image = false;\n    oled_status_screen();\n#elif CONFIG_HOMEHUB_LED_BACKEND_MUSE && CONFIG_HOMEHUB_DISPLAY_COMMANDS\n    muse_ui_image_hide();", 1)
+    ls.write_text(t); print("  patched main/led_status.c (SSD1306 backend)")
