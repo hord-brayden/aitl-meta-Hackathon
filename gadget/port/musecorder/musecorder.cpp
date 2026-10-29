@@ -1049,7 +1049,8 @@ static void tickTask(void *) {
         // The last run ended in a crash: leave the applet stored but do not relaunch it, so a bad applet can never loop the device.
         xSemaphoreTake(s_lock, portMAX_DELAY); logf("applet %s not relaunched after a crash (reset %d)", run, (int)why); storeSet("run", nullptr); xSemaphoreGive(s_lock); free(run); run = nullptr;
     }
-    if (run) { xSemaphoreTake(s_lock, portMAX_DELAY); if (!startStored(run, false)) logf("stored applet %s missing", run); xSemaphoreGive(s_lock); free(run); }
+    int64_t boot_us = esp_timer_get_time();
+    if (run) { s_relaunch = run; s_relaunch_gen = s_vm_gen; free(run); logf("applet %s held until the Muse link registers (keeps the heap unfragmented for the session)", s_relaunch.c_str()); }
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(MC_TICK_MS));
         xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -1060,7 +1061,11 @@ static void tickTask(void *) {
             if (s_running) { s_relaunch = s_app_id; s_relaunch_gen = s_vm_gen; logf("applet %s paused: the Muse link needs the RAM; it relaunches once linked", s_app_id.c_str()); stopApplet(true); }
             else logf("Muse link short of RAM (free %u)", (unsigned)esp_get_free_heap_size());
         }
-        if (!s_relaunch.empty() && !s_running && !s_launcher && s_vm_gen != s_relaunch_gen) { std::string id = s_relaunch; s_relaunch.clear(); if (!startStored(id, false)) logf("stored applet %s missing", id.c_str()); }
+        if (!s_relaunch.empty() && !s_running && !s_launcher && (s_vm_gen != s_relaunch_gen || now - boot_us > 30000000)) {
+            std::string id = s_relaunch; s_relaunch.clear();
+            logf("starting applet %s (%s)", id.c_str(), s_vm_gen != s_relaunch_gen ? "Muse linked" : "no link after 30s");
+            if (!startStored(id, false)) logf("stored applet %s missing", id.c_str());
+        }
         touchTick();
         if (s_tone_on && now >= s_tone_until) toneNext(now);
         if (s_running) {
