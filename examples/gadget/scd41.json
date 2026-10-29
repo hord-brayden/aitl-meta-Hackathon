@@ -1,0 +1,14 @@
+{"id":"co2","name":"CO2 meter","i2c":{"sda":32,"scl":25},"state":{"co2":0,"t":0,"rh":0,"peak":0,"n":0},
+ "screen":[{"text":"SCD41  ppm"},{"big":"${co2}"},{"text":"${t} C   ${rh} %RH"},{"bar":"${co2}","max":2000},{"text":"peak ${peak}  reads ${n}"},
+           {"buttons":[{"label":"reset peak","event":"reset"},{"label":"to Muse","event":"post"}]}],
+ "on":{"start":[{"i2c.write":{"addr":98,"cmd":[33,177]}},{"log":"scd41 periodic measurement started"}],
+       "stop":[{"i2c.write":{"addr":98,"cmd":[63,134]}}],
+       "every:5":[{"i2c.read":{"addr":98,"cmd":[236,5],"wait":2,"len":9,"to":"m"}},
+                  {"if":"${m.0*256+m.1 > 0}","then":[
+                     {"set":{"co2":"${m.0*256+m.1}","t":"${round(-45+175*(m.3*256+m.4)/65535)}","rh":"${round(100*(m.6*256+m.7)/65535)}"}},
+                     {"inc":"n"},
+                     {"if":"${co2 > peak}","then":[{"set":{"peak":"${co2}"}}]},
+                     {"if":"${co2 > 1500}","then":[{"led":"#ff0000"}],"else":[{"led":"#00ff00"}]}]}],
+       "reset":[{"set":{"peak":0}}],
+       "post":[{"muse.say":"CO2 is ${co2} ppm, ${t} C, ${rh} %RH (peak ${peak})."}],
+       "every:900":[{"muse.say":"CO2 ${co2} ppm, ${t} C, ${rh} %RH."}]}}

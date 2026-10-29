@@ -503,14 +503,18 @@ static void doI2c(const char *op, cJSON *a) {   // i2c.scan{to} i2c.read{addr,re
     int addr = (int)numOf(a, "addr", -1); if (addr < 0 || addr > 127) { logf("i2c: bad addr"); return; }
     i2c_master_dev_handle_t d = i2cDev(addr); if (!d) { logf("i2c: device failed"); return; }
     cJSON *regj = cJSON_GetObjectItem(a, "reg"); uint8_t reg = (uint8_t)numOf(a, "reg", 0);
+    uint8_t cmd[8]; int ncmd = 0;   // cmd:[..] = a multi-byte command (Sensirion style), written before the read with a `wait` ms pause
+    cJSON *cj = cJSON_GetObjectItem(a, "cmd"); if (cJSON_IsArray(cj)) { cJSON *it = nullptr; cJSON_ArrayForEach(it, cj) { if (ncmd < 8) cmd[ncmd++] = (uint8_t)fromJson(it).asNum(); } } else if (regj) { cmd[0] = reg; ncmd = 1; }
+    int wait = clampi((int)numOf(a, "wait", cJSON_IsArray(cj) ? 2 : 0), 0, 1500);
     if (!strcmp(op, "read")) {
-        int len = clampi((int)numOf(a, "len", 1), 1, 16); uint8_t buf[16];
-        esp_err_t e = regj ? i2c_master_transmit_receive(d, &reg, 1, buf, len, 100) : i2c_master_receive(d, buf, len, 100);
+        int len = clampi((int)numOf(a, "len", 1), 1, 16); uint8_t buf[16]; esp_err_t e;
+        if (ncmd && wait > 0) { e = i2c_master_transmit(d, cmd, ncmd, 100); if (e == ESP_OK) { vTaskDelay(pdMS_TO_TICKS(wait)); e = i2c_master_receive(d, buf, len, 100); } }
+        else e = ncmd ? i2c_master_transmit_receive(d, cmd, ncmd, buf, len, 100) : i2c_master_receive(d, buf, len, 100);
         if (e != ESP_OK) logf("i2c.read 0x%02x: %s", addr, esp_err_to_name(e));
         else { std::string hex; for (int i = 0; i < len; i++) { char b[4]; snprintf(b, sizeof b, "%02x", buf[i]); hex += b; s_state[to + "." + std::to_string(i)] = Value::N(buf[i]); } s_state[to] = Value::S(hex); }
     } else {
-        uint8_t out[17]; int n = 0; if (regj) out[n++] = reg;
-        cJSON *it = nullptr; cJSON_ArrayForEach(it, cJSON_GetObjectItem(a, "data")) { if (n < 17) out[n++] = (uint8_t)fromJson(it).asNum(); }
+        uint8_t out[24]; int n = 0; for (int i = 0; i < ncmd && n < 24; i++) out[n++] = cmd[i];
+        cJSON *it = nullptr; cJSON_ArrayForEach(it, cJSON_GetObjectItem(a, "data")) { if (n < 24) out[n++] = (uint8_t)fromJson(it).asNum(); }
         esp_err_t e = i2c_master_transmit(d, out, n, 100); if (e != ESP_OK) logf("i2c.write 0x%02x: %s", addr, esp_err_to_name(e));
     }
     i2c_master_bus_rm_device(d);
