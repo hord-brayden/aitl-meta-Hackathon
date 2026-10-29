@@ -1040,6 +1040,11 @@ static void touchTick() {
 
 static void tickTask(void *) {
     char *run = storeGet("run", MC_MAX_ID + 1);
+    esp_reset_reason_t why = esp_reset_reason();
+    if (run && (why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT)) {
+        // The last run ended in a crash: leave the applet stored but do not relaunch it, so a bad applet can never loop the device.
+        xSemaphoreTake(s_lock, portMAX_DELAY); logf("applet %s not relaunched after a crash (reset %d)", run, (int)why); storeSet("run", nullptr); xSemaphoreGive(s_lock); free(run); run = nullptr;
+    }
     if (run) { xSemaphoreTake(s_lock, portMAX_DELAY); if (!startStored(run, false)) logf("stored applet %s missing", run); xSemaphoreGive(s_lock); free(run); }
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(MC_TICK_MS));
@@ -1072,7 +1077,7 @@ extern "C" void musecorder_init(void) {
     if (s_touch_ok) calLoad();
     cfgLoad(); if (s_bright < 100) blApply(s_bright); s_last_touch_us = esp_timer_get_time();
     button_set_press_cb(pressCb);
-    xTaskCreate(tickTask, "musecorder", 4096, nullptr, 3, nullptr);
+    xTaskCreate(tickTask, "musecorder", 6144, nullptr, 3, nullptr);
     ESP_LOGI(TAG, "ready (%dx%d, touch %s, store %s)", s_screen_w, s_screen_h, s_touch_ok ? "yes" : "no", s_store_ok ? "ok" : "none");
 }
 extern "C" void musecorder_vm_connected(void) { s_vm_up = true; }
@@ -1140,6 +1145,12 @@ static void i2cProbePins(int sda, int scl) {
     i2c_del_master_bus(bus); printf("@touch i2c %d/%d:%s\n", sda, scl, found.empty() ? " nothing" : found.c_str());
 }
 extern "C" bool musecorder_console_command(const char *line) {
+    if (!strncmp(line, "applet=", 7)) {   // >applet=stop clears the autostart (emergency exit from a bad applet); >applet=list
+        const char *arg = line + 7;
+        if (!strcmp(arg, "stop")) { xSemaphoreTake(s_lock, portMAX_DELAY); storeSet("run", nullptr); stopApplet(true); xSemaphoreGive(s_lock); printf("@applet stopped; autostart cleared\n"); }
+        else { std::string ids; for (auto &i : storeIds()) ids += " " + i; printf("@applet stored:%s running:%s\n", ids.c_str(), s_running ? s_app_id.c_str() : "-"); }
+        fflush(stdout); return true;
+    }
     if (!strncmp(line, "touch=", 6)) {
         const char *arg = line + 6;
         if (!strcmp(arg, "cal")) { if (!s_touch_ok) { printf("@touch no touch device\n"); return true; } xSemaphoreTake(s_lock, portMAX_DELAY); wizStart(); xSemaphoreGive(s_lock); printf("@touch calibration on screen\n"); fflush(stdout); return true; }
