@@ -391,14 +391,19 @@ static void oled_status_screen(void) {
     ssd1306_flush();
 }
 
+static bool rgb_eq(rgb_t a, rgb_t b) { return a.r == b.r && a.g == b.g && a.b == b.b; }
+
 static void led_hw_set_color(rgb_t c) {
+    /* Map the status colours (shared with the LED backends) to a word. Matching the named
+       colours also keeps every COLOR_* constant used, as -Werror=unused-const-variable wants. */
     const char *w = 0;
-    if (c.r == 0 && c.g == 0 && c.b == 0) w = 0;              /* OFF: keep the last word */
-    else if (c.b > c.r && c.b > c.g) w = "wifi";              /* blue */
-    else if (c.g > c.r && c.g > c.b) w = "ready";             /* green */
-    else if (c.r > 0 && c.b > 0) w = "link";                 /* purple */
-    else if (c.r > 0 && c.g > 0) w = "setup";               /* orange/yellow */
-    else if (c.r > 0) w = "error";                           /* red */
+    if (rgb_eq(c, COLOR_OFF)) w = 0;                                   /* keep the last word */
+    else if (rgb_eq(c, COLOR_BLUE)) w = "wifi";
+    else if (rgb_eq(c, COLOR_GREEN)) w = "ready";
+    else if (rgb_eq(c, COLOR_PURPLE)) w = "link";
+    else if (rgb_eq(c, COLOR_RED)) w = "error";
+    else if (rgb_eq(c, COLOR_YELLOW)) w = "auth";
+    else if (rgb_eq(c, COLOR_ORANGE) || rgb_eq(c, COLOR_DIM_ORANGE)) w = "setup";
     if (w) { strncpy(s_oled_state, w, sizeof(s_oled_state) - 1); s_oled_state[sizeof(s_oled_state) - 1] = 0; }
     oled_status_screen();
 }
@@ -421,6 +426,7 @@ static bool led_hw_init(void) {
     oled_text((SSD1306_W - oled_text_w("MUSECORDER", 1)) / 2, 22, 1, "MUSECORDER");
     oled_text((SSD1306_W - oled_text_w("booting", 1)) / 2, 38, 1, "booting");
     ssd1306_flush();
+    ESP_LOGI(TAG, "SSD1306 OLED backend ready");
     return true;
 }
 
