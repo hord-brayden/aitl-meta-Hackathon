@@ -19,11 +19,13 @@ CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
 
-# 8 MB QUAD PSRAM (AP_3v3) - NOT octal. This is the headroom that the classic
-# ESP32/CYD lacked: the Muse control session's ~62 KB of buffers live here.
+# 8 MB OCTAL PSRAM (AP Memory, 3.3 V). The boot log proved it: configured as quad it
+# failed with "wrong PSRAM line mode" and aborted init. The NORA-W106 is an N16R8-style
+# part (16 MB quad flash + 8 MB OCTAL PSRAM). This is the headroom the classic ESP32/CYD
+# lacked: the Muse control session's ~62 KB of buffers live here.
 CONFIG_SPIRAM=y
-CONFIG_SPIRAM_MODE_QUAD=y
-CONFIG_SPIRAM_MODE_OCT=n
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_MODE_QUAD=n
 CONFIG_SPIRAM_SPEED_80M=y
 
 # Keep the NimBLE host's allocations in PSRAM so pairing has internal RAM to spare.
