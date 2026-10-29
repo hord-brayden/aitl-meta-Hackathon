@@ -1,0 +1,30 @@
+# Arduino Nano ESP32 (u-blox NORA-W106): ESP32-S3, 16 MB quad flash, 8 MB quad
+# PSRAM (AP Memory, 3.3 V). Native USB (USB-Serial-JTAG) + an onboard RGB LED.
+# No built-in display: a 0.96" SSD1306 128x64 I2C OLED on the default I2C pins
+# (A4=GPIO11 SDA, A5=GPIO12 SCL), a 2-axis joystick on ADC1 (A0=GPIO1 VRx,
+# A1=GPIO2 VRy, D2=GPIO5 button). Load last, after sdkconfig.defaults.
+# Verified from the chip itself: ESP32-S3 rev v0.2, "Embedded PSRAM 8MB (AP_3v3)",
+# 16 MB flash.
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# Monochrome OLED status/applet display (new backend; see apply.py).
+CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C=y
+# Onboard RGB LED (NORA module) for the status dot; GPIO per Arduino core.
+CONFIG_HOMEHUB_BUTTON_GPIO=0
+
+# 16 MB quad flash (NORA-W106).
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+
+# 8 MB QUAD PSRAM (AP_3v3) - NOT octal. This is the headroom that the classic
+# ESP32/CYD lacked: the Muse control session's ~62 KB of buffers live here.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_MODE_OCT=n
+CONFIG_SPIRAM_SPEED_80M=y
+
+# Keep the NimBLE host's allocations in PSRAM so pairing has internal RAM to spare.
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
