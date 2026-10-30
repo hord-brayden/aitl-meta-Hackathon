@@ -440,9 +440,8 @@ static bool touchRaw() {
     uint8_t p[8]; bool ok = gt911_rd(0x8150, p, 8);
     gt911_wr(0x814E, 0);   // tell the controller we read the buffer
     if (!ok) return false;
-    int x = p[1] | (p[2] << 8), y = p[3] | (p[4] << 8);
-    if (x < 0) x = 0; if (x >= s_screen_w) x = s_screen_w - 1;
-    if (y < 0) y = 0; if (y >= s_screen_h) y = s_screen_h - 1;
+    int x = clampi(p[1] | (p[2] << 8), 0, s_screen_w - 1);
+    int y = clampi(p[3] | (p[4] << 8), 0, s_screen_h - 1);
     s_raw_x = x; s_raw_y = y; return true;
 }
 static void calDefault() { s_cal = {true, 0, 0, s_screen_w - 1, 0, s_screen_h - 1}; }
