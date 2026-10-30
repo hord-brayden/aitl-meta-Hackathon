@@ -482,7 +482,7 @@ if "4827S043_RGB" not in t:
         "#define LCD_PCLK_HZ      (14 * 1000 * 1000)\n"
         "#define LCD_H_RES        480\n"
         "#define LCD_V_RES        272\n"
-        "#define LCD_BOUNCE_LINES 10\n"
+        "#define LCD_BOUNCE_LINES 8\n"   # must divide v_res (272); 272/8 = 34
         "#define LCD_BAR_ROWS     10\n"
         "#define LCD_ANIM_SCALE   4\n"
         "#define LCD_DOT_MARGIN   6\n"
