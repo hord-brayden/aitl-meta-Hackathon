@@ -28,5 +28,8 @@ else
   echo "SDK token: none in .env (MUSE_GADGET_SDK_TOKEN=...); the gadget will not pair until one is set (serial: >sdk_token=mgst_...)"
 fi
 cd "$SDK/esp32"
+# idf.py only applies SDKCONFIG_DEFAULTS when build-$BOARD/sdkconfig is absent; remove it so edits to
+# the sdkconfig.$BOARD profile (e.g. PSRAM mode) always take effect on a rebuild.
+rm -f "build-$BOARD/sdkconfig"
 idf.py -B build-$BOARD -DIDF_TARGET=$TARGET -DSDKCONFIG=build-$BOARD/sdkconfig -DSDKCONFIG_DEFAULTS="$DEFAULTS" build 2>&1 | tail -25
 echo; echo "built: $SDK/esp32/build-$BOARD/muse-gadget.bin"; echo "flash: BOARD=$BOARD gadget/flash.sh"
