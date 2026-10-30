@@ -340,14 +340,15 @@ static void drawBar(int y, double frac, int h) {
     fillRect(0, y, s_screen_w, h, C_BG); fillRect(x0, y, w, h, C_BAR_BG); if (fill > 0) fillRect(x0, y, fill, h, C_BAR);
 }
 static void clearRows(int y0, int y1) { if (y1 > y0) fillRect(0, y0, s_screen_w, y1 - y0, C_BG); }
-static void drawButton(int x, int y, int w, const std::string &label, uint16_t bg, bool sel = false) {
+static void drawButtonH(int x, int y, int w, int h, const std::string &label, uint16_t bg, bool sel = false) {
     uint16_t fg = C_TEXT;
-    if (sel) { bg = C_TEXT; fg = C_BG; }   // inverted: a clear cursor on a mono screen
-    fillRect(x, y, w, BTN_H, bg);
+    if (sel) { bg = C_TEXT; fg = C_BG; }   // inverted: a clear selection cursor
+    fillRect(x, y, w, h, bg);
     int scale = (int)label.size() * (PIXEL_FONT_WIDTH * 3 + 3) <= w - 8 ? 3 : 2;
-    int hmax = (BTN_H - 2) / 8; if (hmax < 1) hmax = 1; if (scale > hmax) scale = hmax;
-    drawTextIn(x + 2, y + (BTN_H - 8 * scale) / 2, w - 4, label, scale, fg, bg);
+    int hmax = (h - 2) / 8; if (hmax < 1) hmax = 1; if (scale > hmax) scale = hmax;
+    drawTextIn(x + 2, y + (h - 8 * scale) / 2, w - 4, label, scale, fg, bg);
 }
+static void drawButton(int x, int y, int w, const std::string &label, uint16_t bg, bool sel = false) { drawButtonH(x, y, w, BTN_H, label, bg, sel); }
 
 // ---------------------------------------------------------------- touch
 struct Cal { bool valid; int swap, x0, x1, y0, y1; };   // raw -> screen: sx = (rx - x0) * (W-1) / (x1 - x0)
@@ -425,7 +426,10 @@ static bool touchInit() {
         i2c_device_config_t dc = {}; dc.dev_addr_length = I2C_ADDR_BIT_LEN_7; dc.device_address = addrs[i]; dc.scl_speed_hz = 400000;
         if (i2c_master_bus_add_device(s_tbus, &dc, &s_tdev) != ESP_OK) continue;
         uint8_t id[4] = {0};
-        if (gt911_rd(0x8140, id, 4)) { ESP_LOGI(TAG, "GT911 at 0x%02x (id %c%c%c%c)", addrs[i], id[0], id[1], id[2], id[3]); return true; }
+        if (gt911_rd(0x8140, id, 4)) {
+            ESP_LOGI(TAG, "GT911 at 0x%02x (id %c%c%c%c)", addrs[i], id[0], id[1], id[2], id[3]);
+            return true;
+        }
         i2c_master_bus_rm_device(s_tdev); s_tdev = nullptr;
     }
     ESP_LOGW(TAG, "no GT911 on I2C0 SDA19/SCL20");
@@ -437,7 +441,7 @@ static bool touchRaw() {
     if (!(st & 0x80)) return false;
     int points = st & 0x0f;
     if (points == 0) { gt911_wr(0x814E, 0); return false; }
-    uint8_t p[8]; bool ok = gt911_rd(0x8150, p, 8);
+    uint8_t p[8]; bool ok = gt911_rd(0x814F, p, 8);   // 0x814F: track id, then x_lo,x_hi,y_lo,y_hi
     gt911_wr(0x814E, 0);   // tell the controller we read the buffer
     if (!ok) return false;
     int x = clampi(p[1] | (p[2] << 8), 0, s_screen_w - 1);
@@ -984,7 +988,11 @@ static bool startStored(const std::string &id, bool fresh) {
 
 
 // ---------------------------------------------------------------- settings: backlight, screen-off, sleep (deep sleep, touch wakes)
+#if CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB
+#define MC_PIN_BL 2
+#else
 #define MC_PIN_BL 27
+#endif
 static int s_bright = 100, s_off_min = 0;   // persisted in the applet partition as "cfg"
 static bool s_bl_ready = false, s_dim = false, s_swallow = false; static int64_t s_last_touch_us = 0;
 static int s_menu = 0;   // 0 launcher, 1 settings
@@ -1002,13 +1010,10 @@ static void blApply(int percent) {
 static void cfgLoad() { char *t = storeGet("cfg", 32); if (t) { int b, o; if (sscanf(t, "%d %d", &b, &o) == 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; } free(t); } }
 static void cfgSave() { char b[32]; snprintf(b, sizeof b, "%d %d", s_bright, s_off_min); storeSet("cfg", b); }
 static void screenWake() { if (s_dim) { s_dim = false; blApply(s_bright); } s_last_touch_us = esp_timer_get_time(); }
-static void goToSleep() {   // deep sleep: ~nothing drawn, touch (pen IRQ low) wakes into a fresh boot; pairing and applets survive
-    ESP_LOGI(TAG, "sleep: touch the screen to wake");
-    clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 20, "sleeping", 3, C_MUTED); drawText(s_screen_h / 2 + 16, "touch to wake", 2, C_MUTED);
-    vTaskDelay(pdMS_TO_TICKS(1200));
-    blApply(0);
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, 0);
-    esp_deep_sleep_start();
+static void goToSleep() {   // screen off; a touch wakes it. (Deep sleep garbles the RGB panel and needs a wake pin this board lacks.)
+    ESP_LOGI(TAG, "screen off: touch to wake");
+    s_launcher = false; s_hits.clear();
+    s_dim = true; s_swallow = true; blApply(0); s_last_touch_us = esp_timer_get_time();
 }
 
 // ---------------------------------------------------------------- launcher (tap the title, or the idle screen)
@@ -1053,39 +1058,53 @@ static void settingsDraw() {
     drawList("Settings");
 }
 #else
-static void launcherDraw() {
+// Responsive menu: a grid of buttons sized to the screen. 2 columns in landscape, 1 in portrait.
+static void drawMenu(const char *title, std::vector<std::pair<std::string, std::string>> &items) {
     s_hits.clear(); clearRows(0, s_screen_h);
-    int y = TOP_CLEAR + 8; drawText(y, "Musecorder", 3, C_MUTED); y += 8 * 3 + 12;
-    auto ids = storeIds();
-    for (auto &id : ids) {
-        if (y + BTN_H > s_screen_h - TOP_CLEAR - 2 * (BTN_H + 8)) break;
+    int top = TOP_CLEAR + 6; drawText(top, title, 3, C_MUTED); top += 8 * 3 + 10;
+    int bottom = s_screen_h - TOP_CLEAR;
+    int cols = s_screen_w > s_screen_h ? 2 : 1;
+    int n = (int)items.size(); if (n < 1) return;
+    int rows = (n + cols - 1) / cols;
+    const int gap = 8, mx = 12;
+    int bw = (s_screen_w - 2 * mx - (cols - 1) * gap) / cols;
+    int bh = (bottom - top - (rows - 1) * gap) / (rows > 0 ? rows : 1);
+    if (bh > BTN_H) bh = BTN_H;
+    if (bh < 18) bh = 18;
+    for (int i = 0; i < n; i++) {
+        int c = i % cols, r = i / cols;
+        int x = mx + c * (bw + gap), y = top + r * (bh + gap);
+        bool hot = items[i].second == "status" || items[i].second == "repair_hot";
+        std::string ev = items[i].second; if (ev == "repair_hot") ev = "repair";
+        drawButtonH(x, y, bw, bh, items[i].first, hot ? C_BTN_HOT : C_BTN);
+        s_hits.push_back({x, y, bw, bh, ev});
+    }
+}
+static void launcherDraw() {
+    s_menu = 0;
+    std::vector<std::pair<std::string, std::string>> items;
+    for (auto &id : storeIds()) {
         char *nm = storeGet(key("n.", id).c_str(), 40); std::string label = nm ? nm : id; free(nm);
         if (s_running && id == s_app_id) label = "* " + label;
-        drawButton(12, y, s_screen_w - 24, label, C_BTN); s_hits.push_back({12, y, s_screen_w - 24, BTN_H, "run:" + id}); y += BTN_H + 8;
+        items.push_back({label, "run:" + id});
     }
-    if (ids.empty()) { drawText(y + 8, "no applets yet", 2, C_MUTED); drawText(y + 32, "ask your Muse to install one", 2, C_MUTED); y += 64; }
-    y = s_screen_h - TOP_CLEAR - 2 * (BTN_H + 8);
-    drawButton(12, y, s_screen_w - 24, s_running ? "Stop: status screen" : "Status screen", C_BTN_HOT); s_hits.push_back({12, y, s_screen_w - 24, BTN_H, "status"}); y += BTN_H + 8;
-    int half = (s_screen_w - 24 - 8) / 2;
-    drawButton(12, y, half, "Back", C_BTN); s_hits.push_back({12, y, half, BTN_H, "back"});
-    drawButton(12 + half + 8, y, half, "Settings", C_BTN); s_hits.push_back({12 + half + 8, y, half, BTN_H, "settings"});
-    s_menu = 0;
+    items.push_back({s_running ? "Stop" : "Status", "status"});
+    items.push_back({"Settings", "settings"});
+    items.push_back({"Back", "back"});
+    drawMenu("Musecorder", items);
 }
 static void settingsDraw() {
-    s_hits.clear(); s_menu = 1; clearRows(0, s_screen_h);
-    int y = TOP_CLEAR + 8; drawText(y, "Settings", 3, C_MUTED); y += 8 * 3 + 12;
-    int w = s_screen_w - 24, half = (w - 8) / 2; char b[32];
-    snprintf(b, sizeof b, "Brightness %d%%", s_bright); drawButton(12, y, w, b, C_BTN); s_hits.push_back({12, y, w, BTN_H, "bright"}); y += BTN_H + 8;
-    snprintf(b, sizeof b, "Screen off: %s", s_off_min == 0 ? "never" : s_off_min == 2 ? "2 min" : s_off_min == 10 ? "10 min" : "30 min"); drawButton(12, y, w, b, C_BTN); s_hits.push_back({12, y, w, BTN_H, "off"}); y += BTN_H + 8;
-    drawButton(12, y, half, "Reboot", C_BTN); s_hits.push_back({12, y, half, BTN_H, "reboot"});
-    drawButton(12 + half + 8, y, half, "Sleep", C_BTN); s_hits.push_back({12 + half + 8, y, half, BTN_H, "sleep"}); y += BTN_H + 8;
+    s_menu = 1;
+    char b[40]; std::vector<std::pair<std::string, std::string>> items;
+    snprintf(b, sizeof b, "Brightness %d%%", s_bright); items.push_back({b, "bright"});
+    snprintf(b, sizeof b, "Screen off: %s", s_off_min == 0 ? "never" : s_off_min == 2 ? "2 min" : s_off_min == 10 ? "10 min" : "30 min"); items.push_back({b, "off"});
+    items.push_back({"Reboot", "reboot"});
+    items.push_back({"Sleep", "sleep"});
+    items.push_back({"Touch setup", "calibrate"});
     bool arming = s_repair_until > esp_timer_get_time();
-    drawButton(12, y, half, "Touch setup", C_BTN); s_hits.push_back({12, y, half, BTN_H, "calibrate"});
-    drawButton(12 + half + 8, y, half, arming ? "SURE?" : "Re-pair", arming ? C_BTN_HOT : C_BTN); s_hits.push_back({12 + half + 8, y, half, BTN_H, "repair"}); y += BTN_H + 8;
-    if (arming) { drawText(y, "tap SURE? to erase pairing", 2, C_BAR); y += 24; }
-    snprintf(b, sizeof b, "free %u KB  %s", (unsigned)(esp_get_free_heap_size() / 1024), s_vm_up ? "Muse linked" : "Muse offline"); drawText(y + 4, b, 2, C_MUTED);
-    y = s_screen_h - TOP_CLEAR - (BTN_H + 8);
-    drawButton(12, y, w, "Back", C_BTN); s_hits.push_back({12, y, w, BTN_H, "launcher"});
+    items.push_back({arming ? "SURE? erase" : "Re-pair", arming ? "repair_hot" : "repair"});
+    items.push_back({"Back", "launcher"});
+    drawMenu("Settings", items);
 }
 #endif  // MC_JOYSTICK
 static void launcherOpen() { s_launcher = true; s_repair_until = 0; launcherDraw(); ESP_LOGI(TAG, "launcher open"); }
