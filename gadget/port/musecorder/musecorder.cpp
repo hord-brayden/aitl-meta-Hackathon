@@ -69,7 +69,8 @@ static cJSON *errorResult(const char *code, const char *message);
 #define MC_PIN_AMP_EN -1
 #define MC_TAP_SAMPLES 1
 #elif CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB
-#define MC_PIN_AMP_EN -1          // ESP32-4827S043: GT911 capacitive touch lands in stage 2 (no touch yet)
+#define MC_TOUCH_GT911 1          // ESP32-4827S043: GT911 capacitive touch on I2C0 (SDA 19, SCL 20, RST 38)
+#define MC_PIN_AMP_EN -1
 #define MC_TAP_SAMPLES 2
 #else
 #define MC_TOUCH_CST820 1         // capacitive panel on I2C0: SDA 33, SCL 32, address 0x15
@@ -396,6 +397,52 @@ static bool touchRaw() {
     if ((b[0] & 0x0F) != 1) return false;
     int x = ((b[1] & 0x0F) << 8) | b[2], y = ((b[3] & 0x0F) << 8) | b[4];
     if (x >= s_screen_w || y >= s_screen_h) return false;
+    s_raw_x = x; s_raw_y = y; return true;
+}
+static void calDefault() { s_cal = {true, 0, 0, s_screen_w - 1, 0, s_screen_h - 1}; }
+#elif MC_TOUCH_GT911
+// GT911 capacitive controller on I2C0 (SDA 19, SCL 20, RST 38). It reports absolute
+// screen coordinates, so no calibration is needed: the mapping is identity.
+#define GT911_RST 38
+static i2c_master_bus_handle_t s_tbus = nullptr; static i2c_master_dev_handle_t s_tdev = nullptr;
+static bool gt911_rd(uint16_t reg, uint8_t *buf, size_t n) {
+    uint8_t r[2] = { (uint8_t)(reg >> 8), (uint8_t)(reg & 0xff) };
+    return i2c_master_transmit_receive(s_tdev, r, 2, buf, n, 50) == ESP_OK;
+}
+static bool gt911_wr(uint16_t reg, uint8_t val) {
+    uint8_t b[3] = { (uint8_t)(reg >> 8), (uint8_t)(reg & 0xff), val };
+    return i2c_master_transmit(s_tdev, b, 3, 50) == ESP_OK;
+}
+static bool touchInit() {
+    i2c_master_bus_config_t bc = {}; bc.i2c_port = I2C_NUM_0; bc.sda_io_num = GPIO_NUM_19; bc.scl_io_num = GPIO_NUM_20;
+    bc.clk_source = I2C_CLK_SRC_DEFAULT; bc.glitch_ignore_cnt = 7; bc.flags.enable_internal_pullup = true;
+    if (i2c_new_master_bus(&bc, &s_tbus) != ESP_OK) return false;
+    gpio_reset_pin((gpio_num_t)GT911_RST); gpio_set_direction((gpio_num_t)GT911_RST, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)GT911_RST, 0); vTaskDelay(pdMS_TO_TICKS(12));
+    gpio_set_level((gpio_num_t)GT911_RST, 1); vTaskDelay(pdMS_TO_TICKS(80));
+    const uint8_t addrs[2] = { 0x5D, 0x14 };
+    for (int i = 0; i < 2; i++) {
+        i2c_device_config_t dc = {}; dc.dev_addr_length = I2C_ADDR_BIT_LEN_7; dc.device_address = addrs[i]; dc.scl_speed_hz = 400000;
+        if (i2c_master_bus_add_device(s_tbus, &dc, &s_tdev) != ESP_OK) continue;
+        uint8_t id[4] = {0};
+        if (gt911_rd(0x8140, id, 4)) { ESP_LOGI(TAG, "GT911 at 0x%02x (id %c%c%c%c)", addrs[i], id[0], id[1], id[2], id[3]); return true; }
+        i2c_master_bus_rm_device(s_tdev); s_tdev = nullptr;
+    }
+    ESP_LOGW(TAG, "no GT911 on I2C0 SDA19/SCL20");
+    return false;
+}
+static bool touchRaw() {
+    uint8_t st = 0;
+    if (!gt911_rd(0x814E, &st, 1)) return false;
+    if (!(st & 0x80)) return false;
+    int points = st & 0x0f;
+    if (points == 0) { gt911_wr(0x814E, 0); return false; }
+    uint8_t p[8]; bool ok = gt911_rd(0x8150, p, 8);
+    gt911_wr(0x814E, 0);   // tell the controller we read the buffer
+    if (!ok) return false;
+    int x = p[1] | (p[2] << 8), y = p[3] | (p[4] << 8);
+    if (x < 0) x = 0; if (x >= s_screen_w) x = s_screen_w - 1;
+    if (y < 0) y = 0; if (y >= s_screen_h) y = s_screen_h - 1;
     s_raw_x = x; s_raw_y = y; return true;
 }
 static void calDefault() { s_cal = {true, 0, 0, s_screen_w - 1, 0, s_screen_h - 1}; }
