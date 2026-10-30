@@ -468,6 +468,10 @@ if "HOMEHUB_LED_BACKEND_4827S043_RGB" not in t:
 
 ls = root / "main" / "led_status.c"; t = ls.read_text()
 if "4827S043_RGB" not in t:
+    # The ST7701 RGB code is the #else for every non-SPI display; exclude the 4827 so its own block wins.
+    t = t.replace(
+        "    return esp_lcd_panel_disp_on_off(s_panel, true);\n}\n#else\ntypedef struct {",
+        "    return esp_lcd_panel_disp_on_off(s_panel, true);\n}\n#elif !CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB\ntypedef struct {", 1)
     # pin defines, appended to the pin-define chain (before its closing #endif)
     t = t.replace(
         "#define LCD_DOT_MARGIN   8\n#define LCD_BUF_CAPS     MALLOC_CAP_DMA\n#endif\n",
