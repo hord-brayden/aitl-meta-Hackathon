@@ -303,6 +303,19 @@ static const uint16_t C_BG = 0, C_TEXT = be565(0xf3, 0xf4, 0xf8), C_BIG = be565(
 static uint16_t hexColor(const std::string &in, uint16_t dflt) { std::string h = in; if (!h.empty() && h[0] == '#') h.erase(0, 1); if (h.size() != 6) return dflt; unsigned rgb = (unsigned)strtoul(h.c_str(), nullptr, 16); return be565(rgb >> 16, rgb >> 8, rgb); }
 
 static bool ensureStrip() { if (!s_strip && s_screen_w > 0) s_strip = (uint16_t *)malloc(s_screen_w * STRIP_ROWS * sizeof(uint16_t)); return s_strip != nullptr; }
+// Display rotation: a landscape-native panel can present a portrait UI. musecorder draws in logical
+// coords; mcDrawRect rotates each strip to physical coords. s_rot 0 = native, 1 = 90 degrees.
+static int s_phys_w = 0, s_phys_h = 0, s_rot = 0;
+static uint16_t *s_rotbuf = nullptr;
+static void mcDrawRect(int x, int y, int w, int h, const uint16_t *buf) {
+    if (s_rot == 0) { led_status_draw_rect(x, y, w, h, buf); return; }
+    if (!s_rotbuf) s_rotbuf = (uint16_t *)malloc(s_screen_w * STRIP_ROWS * sizeof(uint16_t));
+    if (!s_rotbuf) return;
+    for (int pr = 0; pr < w; pr++)
+        for (int pc = 0; pc < h; pc++)
+            s_rotbuf[pr * h + pc] = buf[(h - 1 - pc) * w + pr];
+    led_status_draw_rect(s_phys_w - y - h, x, h, w, s_rotbuf);   // physical rect: w/h swapped
+}
 static void fillRect(int x, int y, int w, int h, uint16_t color) {
     if (!ensureStrip()) return;
     if (x < 0) { w += x; x = 0; }
@@ -311,7 +324,7 @@ static void fillRect(int x, int y, int w, int h, uint16_t color) {
     if (y + h > s_screen_h) h = s_screen_h - y;
     if (w <= 0 || h <= 0) return;
     for (int i = 0; i < w * STRIP_ROWS; i++) s_strip[i] = color;
-    for (int sy = 0; sy < h; sy += STRIP_ROWS) { int rows = h - sy < STRIP_ROWS ? h - sy : STRIP_ROWS; led_status_draw_rect(x, y + sy, w, rows, s_strip); }
+    for (int sy = 0; sy < h; sy += STRIP_ROWS) { int rows = h - sy < STRIP_ROWS ? h - sy : STRIP_ROWS; mcDrawRect(x, y + sy, w, rows, s_strip); }
 }
 // Text of height 8*scale, centred in [x, x+w), with its own background.
 static void drawTextIn(int x, int y, int w, const std::string &text, int scale, uint16_t color, uint16_t bg) {
@@ -331,7 +344,7 @@ static void drawTextIn(int x, int y, int w, const std::string &text, int scale, 
                 }
             }
         }
-        led_status_draw_rect(x, y + sy, w, rows, s_strip);
+        mcDrawRect(x, y + sy, w, rows, s_strip);
     }
 }
 static void drawText(int y, const std::string &text, int scale, uint16_t color) { drawTextIn(0, y, s_screen_w, text, scale, color, C_BG); }
@@ -444,9 +457,10 @@ static bool touchRaw() {
     uint8_t p[8]; bool ok = gt911_rd(0x814F, p, 8);   // 0x814F: track id, then x_lo,x_hi,y_lo,y_hi
     gt911_wr(0x814E, 0);   // tell the controller we read the buffer
     if (!ok) return false;
-    int x = clampi(p[1] | (p[2] << 8), 0, s_screen_w - 1);
-    int y = clampi(p[3] | (p[4] << 8), 0, s_screen_h - 1);
-    s_raw_x = x; s_raw_y = y; return true;
+    int pw = s_phys_w ? s_phys_w : s_screen_w, ph = s_phys_h ? s_phys_h : s_screen_h;
+    int px = clampi(p[1] | (p[2] << 8), 0, pw - 1), py = clampi(p[3] | (p[4] << 8), 0, ph - 1);
+    if (s_rot) { s_raw_x = py; s_raw_y = pw - 1 - px; } else { s_raw_x = px; s_raw_y = py; }
+    return true;
 }
 static void calDefault() { s_cal = {true, 0, 0, s_screen_w - 1, 0, s_screen_h - 1}; }
 #else   // no touch panel (joystick board): stubs so touchRead()/calLoad() still compile
@@ -1007,8 +1021,8 @@ static void blApply(int percent) {
     int d = percent <= 0 ? 0 : percent >= 100 ? 255 : 8 + percent * 247 / 100;
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_4, d); ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_4);
 }
-static void cfgLoad() { char *t = storeGet("cfg", 32); if (t) { int b, o; if (sscanf(t, "%d %d", &b, &o) == 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; } free(t); } }
-static void cfgSave() { char b[32]; snprintf(b, sizeof b, "%d %d", s_bright, s_off_min); storeSet("cfg", b); }
+static void cfgLoad() { char *t = storeGet("cfg", 32); if (t) { int b, o, r = 0; int n = sscanf(t, "%d %d %d", &b, &o, &r); if (n >= 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; if (n >= 3) s_rot = r ? 1 : 0; } free(t); } }
+static void cfgSave() { char b[32]; snprintf(b, sizeof b, "%d %d %d", s_bright, s_off_min, s_rot); storeSet("cfg", b); }
 static void screenWake() { if (s_dim) { s_dim = false; blApply(s_bright); } s_last_touch_us = esp_timer_get_time(); }
 static void goToSleep() {   // screen off; a touch wakes it. (Deep sleep garbles the RGB panel and needs a wake pin this board lacks.)
     ESP_LOGI(TAG, "screen off: touch to wake");
@@ -1098,6 +1112,7 @@ static void settingsDraw() {
     char b[40]; std::vector<std::pair<std::string, std::string>> items;
     snprintf(b, sizeof b, "Brightness %d%%", s_bright); items.push_back({b, "bright"});
     snprintf(b, sizeof b, "Screen off: %s", s_off_min == 0 ? "never" : s_off_min == 2 ? "2 min" : s_off_min == 10 ? "10 min" : "30 min"); items.push_back({b, "off"});
+    if (s_phys_w > s_phys_h) items.push_back({s_rot ? "Go landscape" : "Go portrait", "orient"});
     items.push_back({"Reboot", "reboot"});
     items.push_back({"Sleep", "sleep"});
     items.push_back({"Touch setup", "calibrate"});
@@ -1118,6 +1133,7 @@ static void launcherTap(const std::string &ev) {
     else if (ev == "bright") { s_bright = s_bright > 60 ? 60 : s_bright > 30 ? 30 : s_bright > 10 ? 10 : 100; blApply(s_bright); cfgSave(); settingsDraw(); }
     else if (ev == "off") { s_off_min = s_off_min == 0 ? 2 : s_off_min == 2 ? 10 : s_off_min == 10 ? 30 : 0; cfgSave(); settingsDraw(); }
     else if (ev == "reboot") { clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rebooting", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(300)); esp_restart(); }
+    else if (ev == "orient") { s_rot = !s_rot; cfgSave(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rotating", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(400)); esp_restart(); }
     else if (ev == "sleep") goToSleep();
     else if (ev == "calibrate") { if (s_touch_ok) wizStart(); }
     else if (ev == "repair") {   // two taps within 8 s: the same as holding BOOT for 5 s (erase pairing, reboot into setup)
@@ -1282,14 +1298,19 @@ static void tickTask(void *) {
 // ---------------------------------------------------------------- public API
 extern "C" void musecorder_init(void) {
     s_lock = xSemaphoreCreateMutex();
-    if (!led_status_display_info(&s_screen_w, &s_screen_h)) { s_screen_w = 0; }
+    if (!led_status_display_info(&s_phys_w, &s_phys_h)) { s_phys_w = s_phys_h = 0; }
     storeInit();
+    cfgLoad();
+    if (s_phys_w <= s_phys_h) s_rot = 0;   // rotation only makes sense on a landscape-native panel
+    if (s_phys_w > 0) { s_screen_w = s_rot ? s_phys_h : s_phys_w; s_screen_h = s_rot ? s_phys_w : s_phys_h; }
+    else s_screen_w = 0;
     s_touch_ok = s_screen_w > 0 && touchInit();
     if (s_touch_ok) calLoad();
 #if MC_JOYSTICK
     joyInit();
 #endif
-    cfgLoad(); if (s_bright < 100) blApply(s_bright); s_last_touch_us = esp_timer_get_time();
+    if (s_bright < 100) blApply(s_bright);
+    s_last_touch_us = esp_timer_get_time();
     button_set_press_cb(pressCb);
     xTaskCreate(tickTask, "musecorder", 6144, nullptr, 3, nullptr);
     ESP_LOGI(TAG, "ready (%dx%d, touch %s, store %s)", s_screen_w, s_screen_h, s_touch_ok ? "yes" : "no", s_store_ok ? "ok" : "none");
