@@ -348,6 +348,16 @@ static void drawTextIn(int x, int y, int w, const std::string &text, int scale, 
     }
 }
 static void drawText(int y, const std::string &text, int scale, uint16_t color) { drawTextIn(0, y, s_screen_w, text, scale, color, C_BG); }
+static bool s_idle_shown = false;
+static void drawIdle() {   // musecorder's own idle screen; used in portrait, where Meta's animation only draws landscape
+    s_launcher = false; s_hits.clear(); s_cleared = false; fillRect(0, 0, s_screen_w, s_screen_h, C_BG);
+    int cy = s_screen_h / 2;
+    drawText(cy - 34, "MUSECORDER", 3, C_BIG);
+    drawText(cy + 6, s_vm_up ? "Muse linked" : "connecting", 2, C_MUTED);
+    drawText(cy + 36, "tap for menu", 2, C_MUTED);
+    s_idle_shown = true;
+}
+static void showIdle() { if (s_rot) drawIdle(); else led_status_show_animation(); }
 static void drawBar(int y, double frac, int h) {
     int x0 = 16, w = s_screen_w - 32, fill = (int)(w * (frac < 0 ? 0 : frac > 1 ? 1 : frac));
     fillRect(0, y, s_screen_w, h, C_BG); fillRect(x0, y, w, h, C_BAR_BG); if (fill > 0) fillRect(x0, y, fill, h, C_BAR);
@@ -508,7 +518,7 @@ static void wizSample() {   // called on pen release with the last raw sample
     s_cal.y0 = R(0, 1) - ay * WIZ_M / spanY; s_cal.y1 = R(2, 1) + ay * (WIZ_M - 1) / spanY;
     calSave(); logf("touch calibrated (swap %d)", sw);
     s_wiz = -1; s_cleared = false; s_dirty_screen = true;
-    if (!s_running) led_status_show_animation();
+    if (!s_running) showIdle();
 }
 
 // ---------------------------------------------------------------- sound, PWM, ADC, I2C
@@ -970,7 +980,7 @@ static void stopApplet(bool restoreScreen) {
     s_timers.clear(); s_watches.clear(); s_state.clear(); s_hits.clear(); s_running = false; s_exit = false; s_cleared = false; s_canvas = false;
     toneSet(0); s_tone_q.clear(); pwmStopAll(); i2cRelease();
     if (s_sub_id > 0) { noise_ctrl_req_cancel(s_sub_id); s_sub_id = 0; }
-    if (restoreScreen) led_status_show_animation();
+    if (restoreScreen) showIdle();
 }
 static bool startApplet(cJSON *doc, bool fresh) {
     stopApplet(false);
@@ -988,7 +998,7 @@ static bool startApplet(cJSON *doc, bool fresh) {
         }
     }
     ensureStrip();
-    s_running = true; s_dirty_screen = true; s_launcher = false;
+    s_running = true; s_dirty_screen = true; s_launcher = false; s_idle_shown = false;
     storeSet("run", s_app_id.c_str()); s_relaunch.clear();
     logf("applet %s started", s_app_id.c_str());
     fire("start");
@@ -1131,8 +1141,8 @@ static void settingsDraw() {
     drawMenu("Settings", items);
 }
 #endif  // MC_JOYSTICK
-static void launcherOpen() { s_launcher = true; s_repair_until = 0; launcherDraw(); ESP_LOGI(TAG, "launcher open"); }
-static void launcherClose() { s_launcher = false; s_hits.clear(); s_cleared = false; if (s_running) s_dirty_screen = true; else led_status_show_animation(); }
+static void launcherOpen() { s_launcher = true; s_idle_shown = false; s_repair_until = 0; launcherDraw(); ESP_LOGI(TAG, "launcher open"); }
+static void launcherClose() { s_launcher = false; s_hits.clear(); s_cleared = false; if (s_running) s_dirty_screen = true; else showIdle(); }
 static void launcherTap(const std::string &ev) {
     ESP_LOGI(TAG, "launcher: %s", ev.c_str());
     if (ev == "back") launcherClose();
@@ -1300,6 +1310,7 @@ static void tickTask(void *) {
                 if (s_dirty_state && now - s_last_save > 2000000) saveState();
             }
         } else s_tap_pending = false;
+        if (s_rot && !s_running && !s_launcher && s_wiz < 0 && !s_idle_shown) drawIdle();
         xSemaphoreGive(s_lock);
     }
 }
@@ -1324,7 +1335,7 @@ extern "C" void musecorder_init(void) {
     xTaskCreate(tickTask, "musecorder", 6144, nullptr, 3, nullptr);
     ESP_LOGI(TAG, "ready (%dx%d, touch %s, store %s)", s_screen_w, s_screen_h, s_touch_ok ? "yes" : "no", s_store_ok ? "ok" : "none");
 }
-extern "C" void musecorder_vm_connected(void) { s_vm_up = true; s_vm_gen = s_vm_gen + 1; }
+extern "C" void musecorder_vm_connected(void) { s_vm_up = true; s_vm_gen = s_vm_gen + 1; s_idle_shown = false; }
 extern "C" void musecorder_session_starved(void) { s_starved = true; }
 extern "C" void musecorder_screen_reset(void) { s_cleared = false; s_dirty_screen = true; if (s_launcher) s_launcher = false; }
 static bool pressCb(bool pressed) {
