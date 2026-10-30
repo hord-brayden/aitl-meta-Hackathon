@@ -22,3 +22,9 @@ CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 
 # Applet runtime (touch launcher once GT911 lands).
 CONFIG_HOMEHUB_MUSECORDER=y
+
+# BLE HID (stage 1): keep Bluetooth up after pairing so an HID keyboard profile can run.
+# Allowed because MUSE_ENABLED is off (we pair via HomeHub, not the on-device Muse-voice feature).
+CONFIG_HOMEHUB_BLE_PERSISTENT=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=2
+CONFIG_HOMEHUB_BLE_PERSISTENT_ADV_INTERVAL_MS=1000
