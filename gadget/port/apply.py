@@ -147,7 +147,7 @@ if "HOMEHUB_MUSECORDER" not in t:
     t = t.replace("    config HOMEHUB_SENSECAP_SENSORS\n", (
         "    config HOMEHUB_MUSECORDER\n"
         "        bool \"Musecorder applet runtime (applet.install/remove/state/event)\"\n"
-        "        depends on HOMEHUB_LED_BACKEND_CYD_ILI9341 || HOMEHUB_LED_BACKEND_CYD_ST7796\n"
+        "        depends on HOMEHUB_LED_BACKEND_CYD_ILI9341 || HOMEHUB_LED_BACKEND_CYD_ST7796 || HOMEHUB_LED_BACKEND_SSD1306_I2C\n"
         "        default y\n"
         "        help\n"
         "            Lets Muse install small JSON tools (applets) on the gadget over the control\n"

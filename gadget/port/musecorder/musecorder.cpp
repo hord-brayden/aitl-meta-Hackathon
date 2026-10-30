@@ -64,6 +64,10 @@ static cJSON *errorResult(const char *code, const char *message);
 #define MC_TOUCH_XPT2046 1        // resistive panel on the LCD's SPI bus: CS 33, pen IRQ 36
 #define MC_PIN_AMP_EN 4           // speaker amplifier enable (high = on)
 #define MC_TAP_SAMPLES 1
+#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C
+#define MC_JOYSTICK 1             // Nano ESP32: no touch panel; a 2-axis joystick navigates the menu
+#define MC_PIN_AMP_EN -1
+#define MC_TAP_SAMPLES 1
 #else
 #define MC_TOUCH_CST820 1         // capacitive panel on I2C0: SDA 33, SCL 32, address 0x15
 #define MC_PIN_AMP_EN -1
@@ -282,8 +286,13 @@ static void storeInit() {
 // ---------------------------------------------------------------- screen primitives
 #define STRIP_ROWS 4
 static uint16_t *s_strip = nullptr;   // s_screen_w * STRIP_ROWS
+#if CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C
+#define TOP_CLEAR 0                   // the mono OLED has no Meta status bars
+#define BTN_H 13
+#else
 #define TOP_CLEAR 28                  // Meta's status bars live in the first and last rows
 #define BTN_H 44
+#endif
 
 static inline uint16_t be565(uint8_t r, uint8_t g, uint8_t b) { uint16_t v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); return (uint16_t)((v >> 8) | (v << 8)); }
 static const uint16_t C_BG = 0, C_TEXT = be565(0xf3, 0xf4, 0xf8), C_BIG = be565(0x2e, 0xe6, 0xd6), C_MUTED = be565(0x9a, 0xa3, 0xb5), C_BAR = be565(0xe8, 0x79, 0xf9), C_BAR_BG = be565(0x2a, 0x2f, 0x3d), C_BTN = be565(0x24, 0x3a, 0x5e), C_BTN_HOT = be565(0x7a, 0x2f, 0x8e);
@@ -327,10 +336,13 @@ static void drawBar(int y, double frac, int h) {
     fillRect(0, y, s_screen_w, h, C_BG); fillRect(x0, y, w, h, C_BAR_BG); if (fill > 0) fillRect(x0, y, fill, h, C_BAR);
 }
 static void clearRows(int y0, int y1) { if (y1 > y0) fillRect(0, y0, s_screen_w, y1 - y0, C_BG); }
-static void drawButton(int x, int y, int w, const std::string &label, uint16_t bg) {
+static void drawButton(int x, int y, int w, const std::string &label, uint16_t bg, bool sel = false) {
+    uint16_t fg = C_TEXT;
+    if (sel) { bg = C_TEXT; fg = C_BG; }   // inverted: a clear cursor on a mono screen
     fillRect(x, y, w, BTN_H, bg);
     int scale = (int)label.size() * (PIXEL_FONT_WIDTH * 3 + 3) <= w - 8 ? 3 : 2;
-    drawTextIn(x + 2, y + (BTN_H - 8 * scale) / 2, w - 4, label, scale, C_TEXT, bg);
+    int hmax = (BTN_H - 2) / 8; if (hmax < 1) hmax = 1; if (scale > hmax) scale = hmax;
+    drawTextIn(x + 2, y + (BTN_H - 8 * scale) / 2, w - 4, label, scale, fg, bg);
 }
 
 // ---------------------------------------------------------------- touch
@@ -365,7 +377,7 @@ static bool touchRaw() {
     s_raw_x = x; s_raw_y = y; return true;
 }
 static void calDefault() { s_cal = {false, 0, 200, 3900, 200, 3900}; }
-#else
+#elif MC_TOUCH_CST820
 static i2c_master_bus_handle_t s_tbus = nullptr; static i2c_master_dev_handle_t s_tdev = nullptr;
 static bool touchInit() {
     i2c_master_bus_config_t bc = {}; bc.i2c_port = I2C_NUM_0; bc.sda_io_num = GPIO_NUM_33; bc.scl_io_num = GPIO_NUM_32; bc.clk_source = I2C_CLK_SRC_DEFAULT; bc.glitch_ignore_cnt = 7; bc.flags.enable_internal_pullup = true;
@@ -384,6 +396,10 @@ static bool touchRaw() {
     s_raw_x = x; s_raw_y = y; return true;
 }
 static void calDefault() { s_cal = {true, 0, 0, s_screen_w - 1, 0, s_screen_h - 1}; }
+#else   // no touch panel (joystick board): stubs so touchRead()/calLoad() still compile
+static bool touchInit() { return false; }
+static bool touchRaw() { return false; }
+static void calDefault() { s_cal = {false, 0, 0, s_screen_w - 1, 0, s_screen_h - 1}; }
 #endif
 static void calLoad() {
     calDefault(); char *txt = storeGet("cal", 64); if (!txt) return;
@@ -948,6 +964,46 @@ static void goToSleep() {   // deep sleep: ~nothing drawn, touch (pen IRQ low) w
 
 // ---------------------------------------------------------------- launcher (tap the title, or the idle screen)
 static int64_t s_repair_until = 0;
+#if MC_JOYSTICK
+static int s_sel = 0;
+static std::vector<std::pair<std::string, std::string>> s_items;   // (label, event) for joystick menus
+static void drawList(const char *title) {
+    clearRows(0, s_screen_h);
+    int n = (int)s_items.size(); if (n == 0) return;
+    if (s_sel < 0) s_sel = 0; if (s_sel >= n) s_sel = n - 1;
+    const int rh = 11; int top = 0;
+    if (title && *title) { drawTextIn(0, 0, s_screen_w, title, 1, C_MUTED, C_BG); top = 10; }
+    int rows = (s_screen_h - top) / rh; if (rows < 1) rows = 1;
+    int first = s_sel >= rows ? s_sel - rows + 1 : 0;
+    for (int i = 0; i < rows && first + i < n; i++) {
+        int idx = first + i, y = top + i * rh; bool sel = idx == s_sel;
+        uint16_t bg = sel ? C_TEXT : C_BG, fg = sel ? C_BG : C_TEXT;
+        fillRect(0, y, s_screen_w, rh, bg);
+        drawTextIn(2, y + 2, s_screen_w - 4, s_items[idx].first, 1, fg, bg);
+    }
+}
+static void launcherDraw() {
+    s_hits.clear(); s_menu = 0; s_items.clear();
+    for (auto &id : storeIds()) {
+        char *nm = storeGet(key("n.", id).c_str(), 40); std::string label = nm ? nm : id; free(nm);
+        if (s_running && id == s_app_id) label = "*" + label;
+        s_items.push_back({label, "run:" + id});
+    }
+    if (s_items.empty()) s_items.push_back({"(no applets yet)", "noop"});
+    s_items.push_back({s_running ? "Stop applet" : "Status", "status"});
+    s_items.push_back({"Settings", "settings"});
+    s_items.push_back({"Back", "back"});
+    drawList("Musecorder");
+}
+static void settingsDraw() {
+    s_hits.clear(); s_menu = 1; s_items.clear();
+    bool arming = s_repair_until > esp_timer_get_time();
+    s_items.push_back({"Reboot", "reboot"});
+    s_items.push_back({arming ? "Re-pair: SURE?" : "Re-pair", "repair"});
+    s_items.push_back({"Back", "launcher"});
+    drawList("Settings");
+}
+#else
 static void launcherDraw() {
     s_hits.clear(); clearRows(0, s_screen_h);
     int y = TOP_CLEAR + 8; drawText(y, "Musecorder", 3, C_MUTED); y += 8 * 3 + 12;
@@ -982,18 +1038,20 @@ static void settingsDraw() {
     y = s_screen_h - TOP_CLEAR - (BTN_H + 8);
     drawButton(12, y, w, "Back", C_BTN); s_hits.push_back({12, y, w, BTN_H, "launcher"});
 }
+#endif  // MC_JOYSTICK
 static void launcherOpen() { s_launcher = true; s_repair_until = 0; launcherDraw(); ESP_LOGI(TAG, "launcher open"); }
 static void launcherClose() { s_launcher = false; s_hits.clear(); s_cleared = false; if (s_running) s_dirty_screen = true; else led_status_show_animation(); }
 static void launcherTap(const std::string &ev) {
     ESP_LOGI(TAG, "launcher: %s", ev.c_str());
     if (ev == "back") launcherClose();
+    else if (ev == "noop") { /* placeholder row */ }
     else if (ev == "settings") settingsDraw();
     else if (ev == "launcher") launcherDraw();
     else if (ev == "bright") { s_bright = s_bright > 60 ? 60 : s_bright > 30 ? 30 : s_bright > 10 ? 10 : 100; blApply(s_bright); cfgSave(); settingsDraw(); }
     else if (ev == "off") { s_off_min = s_off_min == 0 ? 2 : s_off_min == 2 ? 10 : s_off_min == 10 ? 30 : 0; cfgSave(); settingsDraw(); }
     else if (ev == "reboot") { clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rebooting", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(300)); esp_restart(); }
     else if (ev == "sleep") goToSleep();
-    else if (ev == "calibrate") wizStart();
+    else if (ev == "calibrate") { if (s_touch_ok) wizStart(); }
     else if (ev == "repair") {   // two taps within 8 s: the same as holding BOOT for 5 s (erase pairing, reboot into setup)
         if (s_repair_until > esp_timer_get_time()) { s_repair_until = 0; drawText(s_screen_h / 2, "erasing pairing...", 2, C_TEXT); app_touch_long_press(); }
         else { s_repair_until = esp_timer_get_time() + 8000000; settingsDraw(); }
@@ -1001,6 +1059,56 @@ static void launcherTap(const std::string &ev) {
     else if (ev == "status") { if (s_running) { storeSet("run", nullptr); stopApplet(false); } launcherClose(); }
     else if (!ev.compare(0, 4, "run:")) { std::string id = ev.substr(4); s_launcher = false; s_hits.clear(); if (!(s_running && id == s_app_id)) { if (!startStored(id, false)) { logf("launch %s failed", id.c_str()); launcherClose(); } } else launcherClose(); }
 }
+
+#if MC_JOYSTICK
+// ---------------------------------------------------------------- joystick navigation (no touch)
+#define JOY_VRX_CH ADC_CHANNEL_0   /* GPIO1 = A0 */
+#define JOY_VRY_CH ADC_CHANNEL_1   /* GPIO2 = A1 */
+#define JOY_SW_PIN 5               /* D2 */
+static bool s_joy_ready = false; static int s_joy_dir = 0;
+static bool s_sw_down = false, s_sw_long = false; static int64_t s_sw_since = 0;
+static void joyInit() {
+    if (!s_adc) { adc_oneshot_unit_init_cfg_t uc = {}; uc.unit_id = ADC_UNIT_1; uc.ulp_mode = ADC_ULP_MODE_DISABLE; if (adc_oneshot_new_unit(&uc, &s_adc) != ESP_OK) { ESP_LOGW(TAG, "joy: adc init failed"); return; } }
+    adc_oneshot_chan_cfg_t cc = {}; cc.atten = ADC_ATTEN_DB_12; cc.bitwidth = ADC_BITWIDTH_DEFAULT;
+    adc_oneshot_config_channel(s_adc, JOY_VRX_CH, &cc);
+    adc_oneshot_config_channel(s_adc, JOY_VRY_CH, &cc);
+    gpio_reset_pin((gpio_num_t)JOY_SW_PIN); gpio_set_direction((gpio_num_t)JOY_SW_PIN, GPIO_MODE_INPUT); gpio_set_pull_mode((gpio_num_t)JOY_SW_PIN, GPIO_PULLUP_ONLY);
+    s_joy_ready = true; ESP_LOGI(TAG, "joystick ready (VRx GPIO1, VRy GPIO2, SW GPIO5)");
+}
+static void navMove(int delta) {
+    int n = (int)s_items.size(); if (n <= 0) return;
+    s_sel = ((s_sel + delta) % n + n) % n;
+    if (s_menu == 1) settingsDraw(); else launcherDraw();
+}
+static void navSelect() {
+    int n = (int)s_items.size(); if (s_sel < 0 || s_sel >= n) return;
+    std::string ev = s_items[s_sel].second;
+    if (ev == "settings" || ev == "launcher") s_sel = 0;   // a different menu: cursor to top
+    launcherTap(ev);
+    if (s_launcher) { int m = (int)s_items.size(); if (s_sel >= m) s_sel = m - 1; if (s_sel < 0) s_sel = 0; }
+}
+static void joyTick() {
+    if (!s_joy_ready) return;
+    int vy = 0; adc_oneshot_read(s_adc, JOY_VRY_CH, &vy);
+    int dir = vy < 900 ? -1 : vy > 3200 ? 1 : 0;   // up / down with a wide centre deadzone
+    if (dir != 0 && s_joy_dir == 0 && s_launcher) navMove(dir);
+    s_joy_dir = dir;
+    bool sw = gpio_get_level((gpio_num_t)JOY_SW_PIN) == 0;
+    int64_t now = esp_timer_get_time();
+    if (sw && !s_sw_down) { s_sw_down = true; s_sw_since = now; s_sw_long = false; }
+    else if (sw && s_sw_down && !s_sw_long && now - s_sw_since > 800000) {
+        s_sw_long = true;
+        if (!s_launcher) { s_sel = 0; launcherOpen(); }   // long press opens the menu
+    } else if (!sw && s_sw_down) {
+        s_sw_down = false;
+        if (!s_sw_long) {
+            if (s_launcher) navSelect();
+            else if (!s_running) { if (link_pairing_confirmation_required()) app_touch_short_press(); else { s_sel = 0; launcherOpen(); } }
+            else s_tap_pending = true;   // short press in an applet = boot:press
+        }
+    }
+}
+#endif  // MC_JOYSTICK
 
 // ---------------------------------------------------------------- touch dispatch
 static bool s_down = false, s_wiz_wait_up = false, s_held = false; static int s_dx = 0, s_dy = 0, s_ox = 0, s_oy = 0, s_down_n = 0, s_up_n = 0;
@@ -1084,6 +1192,9 @@ static void tickTask(void *) {
             }
         }
         touchTick();
+#if MC_JOYSTICK
+        joyTick();
+#endif
         if (s_tone_on && now >= s_tone_until) toneNext(now);
         if (s_running) {
             for (auto &t : s_timers) if (now >= t.next) { t.next = now + (int64_t)t.period_ms * 1000; fire(t.key); }
@@ -1107,6 +1218,9 @@ extern "C" void musecorder_init(void) {
     storeInit();
     s_touch_ok = s_screen_w > 0 && touchInit();
     if (s_touch_ok) calLoad();
+#if MC_JOYSTICK
+    joyInit();
+#endif
     cfgLoad(); if (s_bright < 100) blApply(s_bright); s_last_touch_us = esp_timer_get_time();
     button_set_press_cb(pressCb);
     xTaskCreate(tickTask, "musecorder", 6144, nullptr, 3, nullptr);

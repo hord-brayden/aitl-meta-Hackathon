@@ -30,3 +30,6 @@ CONFIG_SPIRAM_SPEED_80M=y
 
 # Keep the NimBLE host's allocations in PSRAM so pairing has internal RAM to spare.
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+
+# Applet runtime + joystick menu.
+CONFIG_HOMEHUB_MUSECORDER=y
