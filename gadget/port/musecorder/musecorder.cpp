@@ -1021,8 +1021,17 @@ static void blApply(int percent) {
     int d = percent <= 0 ? 0 : percent >= 100 ? 255 : 8 + percent * 247 / 100;
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_4, d); ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_4);
 }
-static void cfgLoad() { char *t = storeGet("cfg", 32); if (t) { int b, o, r = 0; int n = sscanf(t, "%d %d %d", &b, &o, &r); if (n >= 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; if (n >= 3) s_rot = r ? 1 : 0; } free(t); } }
-static void cfgSave() { char b[32]; snprintf(b, sizeof b, "%d %d %d", s_bright, s_off_min, s_rot); storeSet("cfg", b); }
+static void cfgLoad() {   // the default NVS partition, so settings persist even on boards without the applets partition
+    nvs_handle_t h; if (nvs_open("mc_cfg", NVS_READONLY, &h) != ESP_OK) return;
+    char t[40] = {0}; size_t n = sizeof t;
+    if (nvs_get_str(h, "cfg", t, &n) == ESP_OK) { int b, o, r = 0; int k = sscanf(t, "%d %d %d", &b, &o, &r); if (k >= 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; if (k >= 3) s_rot = r ? 1 : 0; } }
+    nvs_close(h);
+}
+static void cfgSave() {
+    nvs_handle_t h; if (nvs_open("mc_cfg", NVS_READWRITE, &h) != ESP_OK) return;
+    char b[40]; snprintf(b, sizeof b, "%d %d %d", s_bright, s_off_min, s_rot);
+    nvs_set_str(h, "cfg", b); nvs_commit(h); nvs_close(h);
+}
 static void screenWake() { if (s_dim) { s_dim = false; blApply(s_bright); } s_last_touch_us = esp_timer_get_time(); }
 static void goToSleep() {   // screen off; a touch wakes it. (Deep sleep garbles the RGB panel and needs a wake pin this board lacks.)
     ESP_LOGI(TAG, "screen off: touch to wake");
@@ -1132,8 +1141,8 @@ static void launcherTap(const std::string &ev) {
     else if (ev == "launcher") launcherDraw();
     else if (ev == "bright") { s_bright = s_bright > 60 ? 60 : s_bright > 30 ? 30 : s_bright > 10 ? 10 : 100; blApply(s_bright); cfgSave(); settingsDraw(); }
     else if (ev == "off") { s_off_min = s_off_min == 0 ? 2 : s_off_min == 2 ? 10 : s_off_min == 10 ? 30 : 0; cfgSave(); settingsDraw(); }
-    else if (ev == "reboot") { clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rebooting", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(300)); esp_restart(); }
-    else if (ev == "orient") { s_rot = !s_rot; cfgSave(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rotating", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(400)); esp_restart(); }
+    else if (ev == "reboot") { clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rebooting", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(300)); blApply(0); esp_restart(); }
+    else if (ev == "orient") { s_rot = !s_rot; cfgSave(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rotating", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(400)); blApply(0); esp_restart(); }
     else if (ev == "sleep") goToSleep();
     else if (ev == "calibrate") { if (s_touch_ok) wizStart(); }
     else if (ev == "repair") {   // two taps within 8 s: the same as holding BOOT for 5 s (erase pairing, reboot into setup)
