@@ -444,3 +444,82 @@ static bool led_hw_init(void) {
     t = t.replace("#elif CONFIG_HOMEHUB_LED_BACKEND_MUSE && CONFIG_HOMEHUB_DISPLAY_COMMANDS\n    muse_ui_image_hide();",
                   "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    s_oled_image = false;\n    oled_status_screen();\n#elif CONFIG_HOMEHUB_LED_BACKEND_MUSE && CONFIG_HOMEHUB_DISPLAY_COMMANDS\n    muse_ui_image_hide();", 1)
     ls.write_text(t); print("  patched main/led_status.c (SSD1306 backend)")
+
+# --- ESP32-4827S043: 480x272 colour RGB panel (ST7262) + 8MB octal PSRAM flagship ---
+shutil.copy(here / "sdkconfig.4827", root / "devices" / "sdkconfig.4827")
+print("  copied devices/sdkconfig.4827")
+
+kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
+if "HOMEHUB_LED_BACKEND_4827S043_RGB" not in t:
+    t = t.replace("        config HOMEHUB_LED_BACKEND_SENSECAP_ST7701\n", (
+        "        config HOMEHUB_LED_BACKEND_4827S043_RGB\n"
+        "            bool \"Sunton ESP32-4827S043 4.3 inch 480x272 RGB display\"\n"
+        "            depends on IDF_TARGET_ESP32S3 && SPIRAM\n"
+        "            help\n"
+        "                The Sunton/Guition ESP32-4827S043: a 480x272 colour RGB-parallel panel\n"
+        "                (ST7262) with GT911 capacitive touch and an SD slot.\n"
+        "\n"
+        "        config HOMEHUB_LED_BACKEND_SENSECAP_ST7701\n"), 1)
+    t = t.replace("        default y if HOMEHUB_LED_BACKEND_SENSECAP_ST7701\n",
+                  "        default y if HOMEHUB_LED_BACKEND_SENSECAP_ST7701\n        default y if HOMEHUB_LED_BACKEND_4827S043_RGB\n", 1)
+    t = t.replace("        depends on HOMEHUB_LED_BACKEND_CYD_ILI9341 || HOMEHUB_LED_BACKEND_CYD_ST7796 || HOMEHUB_LED_BACKEND_SSD1306_I2C\n",
+                  "        depends on HOMEHUB_LED_BACKEND_CYD_ILI9341 || HOMEHUB_LED_BACKEND_CYD_ST7796 || HOMEHUB_LED_BACKEND_SSD1306_I2C || HOMEHUB_LED_BACKEND_4827S043_RGB\n", 1)
+    kc.write_text(t); print("  patched Kconfig.projbuild (4827 backend + DISPLAY + MUSECORDER)")
+
+ls = root / "main" / "led_status.c"; t = ls.read_text()
+if "4827S043_RGB" not in t:
+    # pin defines, appended to the pin-define chain (before its closing #endif)
+    t = t.replace(
+        "#define LCD_DOT_MARGIN   8\n#define LCD_BUF_CAPS     MALLOC_CAP_DMA\n#endif\n",
+        "#define LCD_DOT_MARGIN   8\n#define LCD_BUF_CAPS     MALLOC_CAP_DMA\n"
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB\n"
+        "#define LCD_NAME         \"ESP32-4827S043 RGB\"\n"
+        "#define LCD_PIN_BL       2\n"
+        "#define LCD_PCLK_HZ      (14 * 1000 * 1000)\n"
+        "#define LCD_H_RES        480\n"
+        "#define LCD_V_RES        272\n"
+        "#define LCD_BOUNCE_LINES 10\n"
+        "#define LCD_BAR_ROWS     10\n"
+        "#define LCD_ANIM_SCALE   4\n"
+        "#define LCD_DOT_MARGIN   6\n"
+        "#define LCD_BUF_CAPS     (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)\n"
+        "#endif\n", 1)
+    # panel init/on, before led_hw_init
+    t = t.replace(
+        "#endif\n\nstatic bool led_hw_init(void) {\n    s_bar_buf = heap_caps_malloc",
+        "#endif\n\n"
+        "#if CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB\n"
+        "// Sunton ESP32-4827S043: 480x272 RGB parallel panel (ST7262 - a dumb panel, no controller init),\n"
+        "// frame buffer in PSRAM, backlight on GPIO2. Pins from the Sunton schematic.\n"
+        "static esp_err_t lcd_panel_init(void) {\n"
+        "    esp_lcd_rgb_panel_config_t cfg = {\n"
+        "        .clk_src = LCD_CLK_SRC_DEFAULT,\n"
+        "        .timings = {\n"
+        "            .pclk_hz = LCD_PCLK_HZ, .h_res = LCD_H_RES, .v_res = LCD_V_RES,\n"
+        "            .hsync_back_porch = 43, .hsync_front_porch = 8, .hsync_pulse_width = 4,\n"
+        "            .vsync_back_porch = 12, .vsync_front_porch = 8, .vsync_pulse_width = 4,\n"
+        "            .flags = { .pclk_active_neg = 1 },\n"
+        "        },\n"
+        "        .data_width = 16,\n"
+        "        .in_color_format = LCD_COLOR_FMT_RGB565,\n"
+        "        .num_fbs = 1,\n"
+        "        .bounce_buffer_size_px = LCD_H_RES * LCD_BOUNCE_LINES,\n"
+        "        .hsync_gpio_num = 39, .vsync_gpio_num = 41, .de_gpio_num = 40, .pclk_gpio_num = 42,\n"
+        "        .disp_gpio_num = -1,\n"
+        "        .data_gpio_nums = {8, 3, 46, 9, 1, 5, 6, 7, 15, 16, 4, 45, 48, 47, 21, 14},\n"
+        "        .flags = { .fb_in_psram = 1 },\n"
+        "    };\n"
+        "    esp_err_t err = esp_lcd_new_rgb_panel(&cfg, &s_panel);\n"
+        "    if (err == ESP_OK) err = esp_lcd_panel_reset(s_panel);\n"
+        "    if (err == ESP_OK) err = esp_lcd_panel_init(s_panel);\n"
+        "    return err;\n"
+        "}\n"
+        "static esp_err_t lcd_panel_on(void) {\n"
+        "    gpio_config_t bl = { .pin_bit_mask = 1ULL << LCD_PIN_BL, .mode = GPIO_MODE_OUTPUT };\n"
+        "    gpio_config(&bl);\n"
+        "    gpio_set_level((gpio_num_t)LCD_PIN_BL, 1);\n"
+        "    return ESP_OK;\n"
+        "}\n"
+        "#endif\n\n"
+        "static bool led_hw_init(void) {\n    s_bar_buf = heap_caps_malloc", 1)
+    ls.write_text(t); print("  patched led_status.c (4827 RGB backend)")

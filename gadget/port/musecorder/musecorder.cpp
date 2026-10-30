@@ -68,6 +68,9 @@ static cJSON *errorResult(const char *code, const char *message);
 #define MC_JOYSTICK 1             // Nano ESP32: no touch panel; a 2-axis joystick navigates the menu
 #define MC_PIN_AMP_EN -1
 #define MC_TAP_SAMPLES 1
+#elif CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB
+#define MC_PIN_AMP_EN -1          // ESP32-4827S043: GT911 capacitive touch lands in stage 2 (no touch yet)
+#define MC_TAP_SAMPLES 2
 #else
 #define MC_TOUCH_CST820 1         // capacitive panel on I2C0: SDA 33, SCL 32, address 0x15
 #define MC_PIN_AMP_EN -1
