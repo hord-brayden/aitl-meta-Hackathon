@@ -252,7 +252,7 @@ if "musecorder_hid_svcs" not in t:
                   "#if CONFIG_HOMEHUB_MUSECORDER\n"
                   "    {\n"
                   "        const struct ble_gatt_svc_def *hid = musecorder_hid_svcs();\n"
-                  "        if (hid) {\n"
+                  "        if (hid && musecorder_hid_mode_active()) {   // HID svc only in HID mode; otherwise iOS claims the device as a keyboard and the Muse app cannot pair it\n"
                   "            int rc_hid = ble_gatts_count_cfg(hid);\n"
                   "            if (rc_hid == 0) rc_hid = ble_gatts_add_svcs(hid);\n"
                   "            if (rc_hid != 0) ESP_LOGE(TAG, \"musecorder HID gatts add rc=%d\", rc_hid);\n"
@@ -311,6 +311,23 @@ if "CYD_TOUCH_MISO" not in t:
                   "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796   /* CYD_TOUCH_MISO */\n        .miso_io_num = 12,   // the XPT2046 touch controller shares this bus\n#else\n        .miso_io_num = -1,\n#endif\n        .quadwp_io_num = -1,\n        .quadhd_io_num = -1,\n        .max_transfer_sz = LCD_ANIM_BUF_PIXELS * sizeof(uint16_t),", 1)
     if "CYD_TOUCH_MISO" not in t: sys.exit("apply.py: LCD bus MISO anchor not found")
     lm.write_text(t); print("  patched main/led_status.c (MISO 12 on the 4-inch board for touch)")
+
+# --- 4827S043: flip the RGB panel 180 degrees so the GPIO header sits at the top ---
+l4 = root / "main" / "led_status.c"; t = l4.read_text()
+_anchor = ("        .data_gpio_nums = {8, 3, 46, 9, 1, 5, 6, 7, 15, 16, 4, 45, 48, 47, 21, 14},\n"
+           "        .flags = { .fb_in_psram = 1 },\n"
+           "    };\n"
+           "    esp_err_t err = esp_lcd_new_rgb_panel(&cfg, &s_panel);\n"
+           "    if (err == ESP_OK) err = esp_lcd_panel_reset(s_panel);\n"
+           "    if (err == ESP_OK) err = esp_lcd_panel_init(s_panel);\n"
+           "    return err;")
+if "4827 panel 180" not in t and _anchor in t:
+    t = t.replace(_anchor, _anchor.replace(
+        "    if (err == ESP_OK) err = esp_lcd_panel_init(s_panel);\n    return err;",
+        "    if (err == ESP_OK) err = esp_lcd_panel_init(s_panel);\n"
+        "    if (err == ESP_OK && esp_lcd_panel_mirror(s_panel, true, true) != ESP_OK) ESP_LOGW(TAG, \"4827 panel 180 mirror unsupported\");\n"
+        "    return err;"), 1)
+    l4.write_text(t); print("  patched main/led_status.c (4827 panel 180-degree flip)")
 
 # --- CYD: serial ">wifi=" console command (store extra networks without re-pairing) ---
 sc = root / "main" / "sdk_token_console.c"; t = sc.read_text()
