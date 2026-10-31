@@ -130,7 +130,7 @@ for name in ("happy_anim.c", "happy_anim.h"):
 
 # --- CYD: Musecorder applet runtime (gadget/port/musecorder -> main/, commands applet.*) ---
 mc = pathlib.Path(__file__).resolve().parent / "musecorder"
-for name in ("musecorder.cpp", "musecorder.h", "musecorder_sd.c", "musecorder_sd.h"):
+for name in ("musecorder.cpp", "musecorder.h", "musecorder_sd.c", "musecorder_sd.h", "musecorder_hid.c", "musecorder_hid.h"):
     srcf = mc / name; dst = root / "main" / name
     if not dst.exists() or dst.read_bytes() != srcf.read_bytes():
         dst.write_bytes(srcf.read_bytes()); print(f"  copied main/{name}")
@@ -139,6 +139,9 @@ if '"musecorder.cpp"' not in t:
     t = t.replace('    "app.c"\n', '    "app.c"\n    "musecorder.cpp"\n', 1); cm.write_text(t); print("  patched main/CMakeLists.txt (musecorder.cpp)")
 if "    esp_adc\n" not in t:
     t = t.replace("    esp_driver_gpio\n", "    esp_driver_gpio\n    esp_adc\n", 1); cm.write_text(t); print("  patched main/CMakeLists.txt (esp_adc for adc.read)")
+if "    \"musecorder_hid.c\"\n" not in t:
+    t = t.replace('    "musecorder.cpp"\n', '    "musecorder.cpp"\n    "musecorder_hid.c"\n', 1)
+    cm.write_text(t); print("  patched main/CMakeLists.txt (musecorder_hid.c)")
 if '"musecorder_sd.c"' not in t:
     t = t.replace('    "musecorder.cpp"\n', '    "musecorder.cpp"\n    "musecorder_sd.c"\n', 1)
     t = t.replace("    esp_adc\n", "    esp_adc\n    fatfs\n    sdmmc\n    esp_driver_sdspi\n", 1); cm.write_text(t); print("  patched main/CMakeLists.txt (microSD)")
@@ -210,6 +213,56 @@ if "MUSECORDER_INSTALL_DESC" not in t:
                   '        ESP_LOGE(TAG, "session buffer alloc failed");\n#if CONFIG_HOMEHUB_MUSECORDER\n        musecorder_session_starved();   /* CYD_STARVED */\n#endif\n', 1)
     if "musecorder_session_starved" not in t: sys.exit("apply.py: session-buffer anchor not found")
     nc.write_text(t); print("  patched main/noise_control.cpp (applet.* registered)")
+# --- Clean connect-menu name: advertise the friendly prefix alone, no "-XXXXXX" MAC suffix
+#     (per-board name set via CONFIG_HOMEHUB_BLE_NAME_PREFIX in sdkconfig.<board>). node_id is unchanged.
+idf = root / "main" / "identity.c"; t = idf.read_text()
+if "CLEAN_BLE_NAME" not in t:
+    t = t.replace(
+        '    snprintf(s_ble_name, sizeof(s_ble_name),\n             BLE_NAME_PREFIX "-%02X%02X%02X", mac[3], mac[4], mac[5]);',
+        '    snprintf(s_ble_name, sizeof(s_ble_name), "%s", BLE_NAME_PREFIX);   /* CLEAN_BLE_NAME: friendly name only, no MAC suffix */',
+        1)
+    if "CLEAN_BLE_NAME" not in t: sys.exit("apply.py: identity.c ble_name anchor not found (SDK changed)")
+    idf.write_text(t); print("  patched main/identity.c (clean BLE name, no MAC suffix)")
+
+# --- Musecorder BLE HID: boot into HID mode when the NVS flag is set (skip Wi-Fi/Muse, advertise as a keyboard) ---
+aph = root / "main" / "app.c"; t = aph.read_text()
+if "musecorder_hid.h" not in t:
+    t = t.replace('#if CONFIG_HOMEHUB_MUSECORDER\n#include "musecorder.h"\n#endif\n',
+                  '#if CONFIG_HOMEHUB_MUSECORDER\n#include "musecorder.h"\n#include "musecorder_hid.h"\n#endif\n', 1)
+    if "musecorder_hid.h" not in t: sys.exit("apply.py: app.c musecorder.h include anchor not found")
+    t = t.replace('    if (wifi_ssid) {\n        ui_set_status("wifi_connecting");',
+                  "#if CONFIG_HOMEHUB_MUSECORDER\n"
+                  "    if (musecorder_hid_mode_active()) {\n"
+                  "        wifi_ssid = NULL;\n"
+                  "        ESP_LOGI(TAG, \"HID mode active: skipping Wi-Fi/Muse; starting BLE HID\");\n"
+                  "        start_ble_setup_server_if_needed();\n"
+                  "        musecorder_hid_begin();\n"
+                  "    }\n"
+                  "#endif\n"
+                  '    if (wifi_ssid) {\n        ui_set_status("wifi_connecting");', 1)
+    if "HID mode active: skipping" not in t: sys.exit("apply.py: app.c wifi_ssid gate anchor not found (SDK changed)")
+    aph.write_text(t); print("  patched main/app.c (HID mode boot gate)")
+
+# --- Musecorder BLE HID: register the HID GATT service into the SDK NimBLE table at boot ---
+bs = root / "main" / "ble_server.c"; t = bs.read_text()
+if "musecorder_hid_svcs" not in t:
+    t = t.replace('#include "host/util/util.h"\n',
+                  '#include "host/util/util.h"\n#if CONFIG_HOMEHUB_MUSECORDER\n#include "musecorder_hid.h"\n#endif\n', 1)
+    t = t.replace("    if (s_companion.configure_host) s_companion.configure_host();\n",
+                  "#if CONFIG_HOMEHUB_MUSECORDER\n"
+                  "    {\n"
+                  "        const struct ble_gatt_svc_def *hid = musecorder_hid_svcs();\n"
+                  "        if (hid) {\n"
+                  "            int rc_hid = ble_gatts_count_cfg(hid);\n"
+                  "            if (rc_hid == 0) rc_hid = ble_gatts_add_svcs(hid);\n"
+                  "            if (rc_hid != 0) ESP_LOGE(TAG, \"musecorder HID gatts add rc=%d\", rc_hid);\n"
+                  "        }\n"
+                  "    }\n"
+                  "#endif\n"
+                  "    if (s_companion.configure_host) s_companion.configure_host();\n", 1)
+    if "musecorder_hid_svcs" not in t: sys.exit("apply.py: ble_server.c HID anchors not found (SDK changed)")
+    bs.write_text(t); print("  patched main/ble_server.c (musecorder HID service registered)")
+
 ap = root / "main" / "app.c"; t = ap.read_text()
 if "musecorder_command" not in t:
     t = t.replace('#include "button.h"\n', '#include "button.h"\n#if CONFIG_HOMEHUB_MUSECORDER\n#include "musecorder.h"\n#endif\n', 1)
@@ -327,7 +380,10 @@ if '"ssd1306.c"' not in t:
     t = t.replace('    "app.c"\n', '    "app.c"\n    "ssd1306.c"\n', 1); cm.write_text(t); print("  patched main/CMakeLists.txt (ssd1306.c)")
 
 kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
-if "HOMEHUB_LED_BACKEND_SSD1306_I2C" not in t:
+# Guard on the choice entry's own prompt string, not the symbol name: the symbol also appears in the
+# MUSECORDER `depends on` line below, so a name check would skip re-adding the choice entry and leave
+# the backend unselectable (sdkconfig sets an unknown symbol, the choice falls back to DEVKIT_GPIO27).
+if '"SSD1306 128x64 monochrome I2C OLED"' not in t:
     t = t.replace("        config HOMEHUB_LED_BACKEND_SENSECAP_ST7701\n", (
         "        config HOMEHUB_LED_BACKEND_SSD1306_I2C\n"
         "            bool \"SSD1306 128x64 monochrome I2C OLED\"\n"

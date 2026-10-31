@@ -36,6 +36,7 @@ extern "C" {
 #include "wifi_known.h"
 #include "link_pairing.h"
 #include "musecorder_sd.h"
+#include "musecorder_hid.h"
 #include "image_fetch.h"
 void app_touch_short_press(void);   // app.c: the BOOT tap (confirms pairing) and the 5 s hold (erases setup), from the touchscreen
 void app_touch_long_press(void);
@@ -78,6 +79,9 @@ static cJSON *errorResult(const char *code, const char *message);
 #define MC_TAP_SAMPLES 2
 #endif
 #define MC_PIN_SPEAKER 26
+#if MC_JOYSTICK
+#include "ssd1306.h"             // the joystick board drives an SSD1306 OLED; musecorder can flip it 180 for mount orientation
+#endif
 
 // ---------------------------------------------------------------- values + expressions
 struct Value {
@@ -1018,6 +1022,7 @@ static bool startStored(const std::string &id, bool fresh) {
 #define MC_PIN_BL 27
 #endif
 static int s_bright = 100, s_off_min = 0;   // persisted in the applet partition as "cfg"
+static bool s_flip = false;                  // joystick/OLED board: screen + stick rotated 180 for upside-down mounting
 static bool s_bl_ready = false, s_dim = false, s_swallow = false; static int64_t s_last_touch_us = 0;
 static int s_menu = 0;   // 0 launcher, 1 settings
 static void blApply(int percent) {
@@ -1034,12 +1039,12 @@ static void blApply(int percent) {
 static void cfgLoad() {   // the default NVS partition, so settings persist even on boards without the applets partition
     nvs_handle_t h; if (nvs_open("mc_cfg", NVS_READONLY, &h) != ESP_OK) return;
     char t[40] = {0}; size_t n = sizeof t;
-    if (nvs_get_str(h, "cfg", t, &n) == ESP_OK) { int b, o, r = 0; int k = sscanf(t, "%d %d %d", &b, &o, &r); if (k >= 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; if (k >= 3) s_rot = r ? 1 : 0; } }
+    if (nvs_get_str(h, "cfg", t, &n) == ESP_OK) { int b, o, r = 0, f = 0; int k = sscanf(t, "%d %d %d %d", &b, &o, &r, &f); if (k >= 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; if (k >= 3) s_rot = r ? 1 : 0; if (k >= 4) s_flip = f != 0; } }
     nvs_close(h);
 }
 static void cfgSave() {
     nvs_handle_t h; if (nvs_open("mc_cfg", NVS_READWRITE, &h) != ESP_OK) return;
-    char b[40]; snprintf(b, sizeof b, "%d %d %d", s_bright, s_off_min, s_rot);
+    char b[40]; snprintf(b, sizeof b, "%d %d %d %d", s_bright, s_off_min, s_rot, s_flip ? 1 : 0);
     nvs_set_str(h, "cfg", b); nvs_commit(h); nvs_close(h);
 }
 static void screenWake() { if (s_dim) { s_dim = false; blApply(s_bright); } s_last_touch_us = esp_timer_get_time(); }
@@ -1057,7 +1062,7 @@ static std::vector<std::pair<std::string, std::string>> s_items;   // (label, ev
 static void drawList(const char *title) {
     clearRows(0, s_screen_h);
     int n = (int)s_items.size(); if (n == 0) return;
-    if (s_sel < 0) s_sel = 0; if (s_sel >= n) s_sel = n - 1;
+    s_sel = clampi(s_sel, 0, n - 1);
     const int rh = 11; int top = 0;
     if (title && *title) { drawTextIn(0, 0, s_screen_w, title, 1, C_MUTED, C_BG); top = 10; }
     int rows = (s_screen_h - top) / rh; if (rows < 1) rows = 1;
@@ -1071,12 +1076,14 @@ static void drawList(const char *title) {
 }
 static void launcherDraw() {
     s_hits.clear(); s_menu = 0; s_items.clear();
+    if (link_pairing_confirmation_required()) s_items.push_back({"Confirm pairing", "pair"});
+    bool any_applet = false;
     for (auto &id : storeIds()) {
         char *nm = storeGet(key("n.", id).c_str(), 40); std::string label = nm ? nm : id; free(nm);
         if (s_running && id == s_app_id) label = "*" + label;
-        s_items.push_back({label, "run:" + id});
+        s_items.push_back({label, "run:" + id}); any_applet = true;
     }
-    if (s_items.empty()) s_items.push_back({"(no applets yet)", "noop"});
+    if (!any_applet) s_items.push_back({"(no applets yet)", "noop"});
     s_items.push_back({s_running ? "Stop applet" : "Status", "status"});
     s_items.push_back({"Settings", "settings"});
     s_items.push_back({"Back", "back"});
@@ -1085,6 +1092,8 @@ static void launcherDraw() {
 static void settingsDraw() {
     s_hits.clear(); s_menu = 1; s_items.clear();
     bool arming = s_repair_until > esp_timer_get_time();
+    s_items.push_back({s_flip ? "Flip: 180" : "Flip: normal", "flip"});
+    s_items.push_back({musecorder_hid_mode_active() ? "Exit HID keyboard" : "HID keyboard mode", "hidmode"});
     s_items.push_back({"Reboot", "reboot"});
     s_items.push_back({arming ? "Re-pair: SURE?" : "Re-pair", "repair"});
     s_items.push_back({"Back", "launcher"});
@@ -1132,6 +1141,7 @@ static void settingsDraw() {
     snprintf(b, sizeof b, "Brightness %d%%", s_bright); items.push_back({b, "bright"});
     snprintf(b, sizeof b, "Screen off: %s", s_off_min == 0 ? "never" : s_off_min == 2 ? "2 min" : s_off_min == 10 ? "10 min" : "30 min"); items.push_back({b, "off"});
     if (s_phys_w > s_phys_h) items.push_back({s_rot ? "Go landscape" : "Go portrait", "orient"});
+    items.push_back({musecorder_hid_mode_active() ? "Exit HID keyboard" : "HID keyboard mode", "hidmode"});
     items.push_back({"Reboot", "reboot"});
     items.push_back({"Sleep", "sleep"});
     items.push_back({"Touch setup", "calibrate"});
@@ -1146,15 +1156,22 @@ static void launcherClose() { s_launcher = false; s_hits.clear(); s_cleared = fa
 static void launcherTap(const std::string &ev) {
     ESP_LOGI(TAG, "launcher: %s", ev.c_str());
     if (ev == "back") launcherClose();
+    else if (ev == "pair") { ESP_LOGI(TAG, "menu confirms pairing"); app_touch_short_press(); launcherClose(); }
     else if (ev == "noop") { /* placeholder row */ }
     else if (ev == "settings") settingsDraw();
     else if (ev == "launcher") launcherDraw();
     else if (ev == "bright") { s_bright = s_bright > 60 ? 60 : s_bright > 30 ? 30 : s_bright > 10 ? 10 : 100; blApply(s_bright); cfgSave(); settingsDraw(); }
     else if (ev == "off") { s_off_min = s_off_min == 0 ? 2 : s_off_min == 2 ? 10 : s_off_min == 10 ? 30 : 0; cfgSave(); settingsDraw(); }
+    else if (ev == "flip") {
+#if MC_JOYSTICK
+        s_flip = !s_flip; ssd1306_set_flip(s_flip); cfgSave(); ESP_LOGI(TAG, "flip %d", (int)s_flip); settingsDraw();
+#endif
+    }
     else if (ev == "reboot") { clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rebooting", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(300)); blApply(0); esp_restart(); }
     else if (ev == "orient") { s_rot = !s_rot; cfgSave(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rotating", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(400)); blApply(0); esp_restart(); }
     else if (ev == "sleep") goToSleep();
     else if (ev == "calibrate") { if (s_touch_ok) wizStart(); }
+    else if (ev == "hidmode") { bool on = !musecorder_hid_mode_active(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, on ? "entering HID mode" : "back to Muse", 2, C_TEXT); vTaskDelay(pdMS_TO_TICKS(400)); musecorder_hid_set_mode(on); }
     else if (ev == "repair") {   // two taps within 8 s: the same as holding BOOT for 5 s (erase pairing, reboot into setup)
         if (s_repair_until > esp_timer_get_time()) { s_repair_until = 0; drawText(s_screen_h / 2, "erasing pairing...", 2, C_TEXT); app_touch_long_press(); }
         else { s_repair_until = esp_timer_get_time() + 8000000; settingsDraw(); }
@@ -1168,7 +1185,7 @@ static void launcherTap(const std::string &ev) {
 #define JOY_VRX_CH ADC_CHANNEL_0   /* GPIO1 = A0 */
 #define JOY_VRY_CH ADC_CHANNEL_1   /* GPIO2 = A1 */
 #define JOY_SW_PIN 5               /* D2 */
-static bool s_joy_ready = false; static int s_joy_dir = 0;
+static bool s_joy_ready = false; static int s_joy_dir = 0, s_joy_dirx = 0;
 static bool s_sw_down = false, s_sw_long = false; static int64_t s_sw_since = 0;
 static void joyInit() {
     if (!s_adc) { adc_oneshot_unit_init_cfg_t uc = {}; uc.unit_id = ADC_UNIT_1; uc.ulp_mode = ADC_ULP_MODE_DISABLE; if (adc_oneshot_new_unit(&uc, &s_adc) != ESP_OK) { ESP_LOGW(TAG, "joy: adc init failed"); return; } }
@@ -1188,26 +1205,53 @@ static void navSelect() {
     std::string ev = s_items[s_sel].second;
     if (ev == "settings" || ev == "launcher") s_sel = 0;   // a different menu: cursor to top
     launcherTap(ev);
-    if (s_launcher) { int m = (int)s_items.size(); if (s_sel >= m) s_sel = m - 1; if (s_sel < 0) s_sel = 0; }
+    if (s_launcher) { int m = (int)s_items.size(); s_sel = clampi(s_sel, 0, m - 1); }
+}
+static void navClose() {
+    if (s_menu == 1) { s_sel = 0; launcherDraw(); }   // in settings: go back to the launcher
+    else launcherClose();                              // in the launcher: close to the status screen
 }
 static void joyTick() {
     if (!s_joy_ready) return;
-    int vy = 0; adc_oneshot_read(s_adc, JOY_VRY_CH, &vy);
-    int dir = vy < 900 ? -1 : vy > 3200 ? 1 : 0;   // up / down with a wide centre deadzone
-    if (dir != 0 && s_joy_dir == 0 && s_launcher) navMove(dir);
-    s_joy_dir = dir;
-    bool sw = gpio_get_level((gpio_num_t)JOY_SW_PIN) == 0;
     int64_t now = esp_timer_get_time();
+    int vy = 0, vx = 0;
+    adc_oneshot_read(s_adc, JOY_VRY_CH, &vy);
+    adc_oneshot_read(s_adc, JOY_VRX_CH, &vx);
+    int diry = vy < 1200 ? -1 : vy > 2900 ? 1 : 0;   // up(-1) / down(+1), wide centre deadzone
+    int dirx = vx < 1200 ? -1 : vx > 2900 ? 1 : 0;   // left(-1) / right(+1)
+    if (s_flip) { diry = -diry; dirx = -dirx; }       // 180-degree mount: directions follow the flipped screen
+    bool edge_y = diry != 0 && s_joy_dir == 0;        // act the moment the stick crosses out of centre
+    bool edge_x = dirx != 0 && s_joy_dirx == 0;
+    s_joy_dir = diry; s_joy_dirx = dirx;
+    if (edge_x || edge_y) ESP_LOGI(TAG, "joy vx=%d vy=%d dirx=%d diry=%d menu=%d run=%d", vx, vy, dirx, diry, (int)s_launcher, (int)s_running);
+
+    if (s_wiz < 0) {
+        if (s_launcher) {
+            if (edge_y) navMove(diry);                 // up/down move the cursor
+            else if (edge_x && dirx > 0) navSelect();  // right selects (works even without the click wired)
+            else if (edge_x && dirx < 0) navClose();   // left goes back / closes
+        } else if (!s_running) {
+            if (edge_x || edge_y) { s_sel = 0; launcherOpen(); }   // a nudge wakes the menu when idle
+        } else {
+            // an applet is running: hand it all four directions as events
+            if (edge_y) fire(diry < 0 ? "joy:up" : "joy:down");
+            if (edge_x) fire(dirx < 0 ? "joy:left" : "joy:right");
+        }
+    }
+
+    // Click the stick in: select (menu) or boot:press (applet). Long-press always opens the menu.
+    bool sw = gpio_get_level((gpio_num_t)JOY_SW_PIN) == 0;
     if (sw && !s_sw_down) { s_sw_down = true; s_sw_since = now; s_sw_long = false; }
     else if (sw && s_sw_down && !s_sw_long && now - s_sw_since > 800000) {
         s_sw_long = true;
-        if (!s_launcher) { s_sel = 0; launcherOpen(); }   // long press opens the menu
+        if (!s_launcher) { s_sel = 0; launcherOpen(); }   // long press opens the menu (incl. from an applet)
     } else if (!sw && s_sw_down) {
         s_sw_down = false;
+        ESP_LOGI(TAG, "joy click (menu=%d running=%d long=%d)", (int)s_launcher, (int)s_running, (int)s_sw_long);
         if (!s_sw_long) {
             if (s_launcher) navSelect();
             else if (!s_running) { if (link_pairing_confirmation_required()) app_touch_short_press(); else { s_sel = 0; launcherOpen(); } }
-            else s_tap_pending = true;   // short press in an applet = boot:press
+            else s_tap_pending = true;   // short click in an applet = boot:press
         }
     }
 }
@@ -1328,6 +1372,7 @@ extern "C" void musecorder_init(void) {
     if (s_touch_ok) calLoad();
 #if MC_JOYSTICK
     joyInit();
+    ssd1306_set_flip(s_flip);   // apply the saved 180 orientation to the OLED
 #endif
     if (s_bright < 100) blApply(s_bright);
     s_last_touch_us = esp_timer_get_time();

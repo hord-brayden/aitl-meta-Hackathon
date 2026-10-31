@@ -29,6 +29,7 @@ void ssd1306_blit_rgb565(int x, int y, int w, int h, const uint16_t *px);
 void ssd1306_flush(void);                              // push the whole framebuffer over I2C
 void ssd1306_flush_rows(int y0, int y1);               // push only the pages covering [y0, y1)
 void ssd1306_contrast(uint8_t c);                      // 0..255 brightness
+void ssd1306_set_flip(bool flip);                      // false = normal, true = rotated 180 degrees (segment remap + COM scan)
 
 #ifdef __cplusplus
 }

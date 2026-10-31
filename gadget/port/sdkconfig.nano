@@ -10,6 +10,7 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 
 # Monochrome OLED status/applet display (new backend; see apply.py).
 CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C=y
+CONFIG_HOMEHUB_BLE_NAME_PREFIX="CYD nano"
 # Onboard RGB LED (NORA module) for the status dot; GPIO per Arduino core.
 CONFIG_HOMEHUB_BUTTON_GPIO=0
 

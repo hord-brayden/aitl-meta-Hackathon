@@ -67,6 +67,12 @@ bool ssd1306_init(int sda_gpio, int scl_gpio, uint8_t addr) {
     return true;
 }
 
+void ssd1306_set_flip(bool flip) {
+    if (!s_ready) return;
+    cmd(flip ? 0xA0 : 0xA1);   // segment remap (horizontal); 0xA1 is the default from init
+    cmd(flip ? 0xC0 : 0xC8);   // COM scan direction (vertical); 0xC8 is the default from init
+}
+
 void ssd1306_clear(void) { memset(s_fb, 0, sizeof s_fb); }
 
 void ssd1306_px(int x, int y, bool on) {
