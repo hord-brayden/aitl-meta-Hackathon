@@ -30,6 +30,7 @@ bool musecorder_console_command(const char *line);           // serial ">wifi=..
     "Events: start, stop, boot:press, touch (sets touch.x touch.y; also touch:move), every:SECONDS, gpio:PIN:rise|fall|change (pins 4 16 17 21 22 25 26 32 34-39), custom names via applet.event. " \
     "Actions: set{k:v}, inc/dec/toggle k, log, if{if,then,else}, exit, led #rrggbb, tone{freq|freq:[..],ms}, pwm{pin,duty,freq}, gpio.write{pin,value}, gpio.read{pin,to}, adc.read{pin,to} (36 39 32 34 35), " \
     "i2c.scan{to}, i2c.read{addr,reg|cmd:[..],wait,len,to} (bytes land in to.0..to.n), i2c.write{addr,reg|cmd,data,wait} (wait = ms pause; pins from applet i2c{sda,scl}, the 4-pin header is sda 32 scl 25), " \
+    "ir.nec{addr,cmd,pin}, ir.raw{us:[mark,space,...],pin} (38 kHz IR remote; on the StickS3 the IR LED is pin 46 and its 5 V rail powers on automatically), " \
     "draw.rect{x,y,w,h,color}, draw.text{x,y,text,scale,color}, clear, sd.append{file,text}, sd.read{file,to,tail}, sd.draw{file}, sd.fetch{path,file} (microSD), " \
     "muse.say \"text\" (posts into your chat with this Muse), muse.ask{text,to}, http{method,url,json,to} (little RAM), vm.write{path,text,append} (needs scope). " \
     "${expr}: state keys, math, comparisons, functions len int floor ceil round abs min max pad(x,w,fill) mmss(seconds)=m:ss hhmmss clock random(lo,hi) uptime time. The name is the title. Screen 320x480 (y 28-452 usable); a 1 s finger hold opens the launcher."

@@ -1,0 +1,36 @@
+# M5Stack StickS3 (ESP32-S3-PICO-1-N8R8): the Musecorder/Link build.
+# Self-contained overlay on sdkconfig.defaults, like sdkconfig.4827 — NOT Meta's
+# voice-UI chain. MUSE_ENABLED stays off; the device runs the Link stack + the
+# Musecorder applet engine, so it pairs in the normal Muse app and Muse can code
+# applets for it, exactly like the 4827. Its 1.14" ST7789 LCD is driven by our own
+# backend (sticks3_lcd.c), which powers the panel via the M5PM1 chip first.
+# (Voice — the ES8311 codec/mic/speaker — is a later add-on, not in this build.)
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# 1.14" 135x240 ST7789 colour LCD (our self-contained SPI + PMIC backend).
+CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789=y
+# Applet runtime: Muse installs applets over the control session.
+CONFIG_HOMEHUB_MUSECORDER=y
+CONFIG_HOMEHUB_BLE_NAME_PREFIX="MuseGadget-Stick"
+# KEY1, the front button under the screen (GPIO11), is the setup/reset button and
+# the one musecorder taps for its menu. Active-low with an external pull-up.
+CONFIG_HOMEHUB_BUTTON_GPIO=11
+
+# 8 MB flash. The eFuse reports it quad-capable, but the SDK's own build flashes
+# this board DIO, so match that to stay on the known-good path.
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+# 8 MB flash needs a fitting table; reuse Meta's 8 MB layout (nvs + dual OTA).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_muse_8mb.csv"
+
+# 8 MB OCTAL PSRAM (holds the Muse control session's buffers).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_MODE_QUAD=n
+CONFIG_SPIRAM_SPEED_80M=y
+# Keep NimBLE's allocations in PSRAM so pairing has internal RAM to spare.
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y

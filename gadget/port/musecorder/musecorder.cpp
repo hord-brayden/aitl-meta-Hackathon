@@ -20,6 +20,10 @@
 #include "driver/spi_master.h"
 #include "driver/i2c_master.h"
 #include "esp_adc/adc_oneshot.h"
+#include "musecorder_ir.h"
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#include "sticks3_lcd.h"
+#endif
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -73,6 +77,10 @@ static cJSON *errorResult(const char *code, const char *message);
 #define MC_TOUCH_GT911 1          // ESP32-4827S043: GT911 capacitive touch on I2C0 (SDA 19, SCL 20, RST 38)
 #define MC_PIN_AMP_EN -1
 #define MC_TAP_SAMPLES 2
+#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#define MC_BTN_NAV 1              // M5StickS3: no touch; blue btn (GPIO11)=select, side btn (GPIO12)=down
+#define MC_PIN_AMP_EN -1
+#define MC_TAP_SAMPLES 1
 #else
 #define MC_TOUCH_CST820 1         // capacitive panel on I2C0: SDA 33, SCL 32, address 0x15
 #define MC_PIN_AMP_EN -1
@@ -353,15 +361,24 @@ static void drawTextIn(int x, int y, int w, const std::string &text, int scale, 
 }
 static void drawText(int y, const std::string &text, int scale, uint16_t color) { drawTextIn(0, y, s_screen_w, text, scale, color, C_BG); }
 static bool s_idle_shown = false;
+// Largest scale (<= maxscale) at which `txt` fits the panel width; narrow portrait
+// panels like the 135px StickS3 need smaller text than the wide 4827.
+static int fitScale(const std::string &txt, int maxscale) {
+    int sc = maxscale;
+    while (sc > 1 && (int)txt.size() * (PIXEL_FONT_WIDTH * sc + sc) > s_screen_w) sc--;
+    return sc;
+}
 static void drawIdle() {   // musecorder's own idle screen; used in portrait, where Meta's animation only draws landscape
     s_launcher = false; s_hits.clear(); s_cleared = false; fillRect(0, 0, s_screen_w, s_screen_h, C_BG);
-    int cy = s_screen_h / 2;
-    drawText(cy - 34, "MUSECORDER", 3, C_BIG);
-    drawText(cy + 6, s_vm_up ? "Muse linked" : "connecting", 2, C_MUTED);
-    drawText(cy + 36, "tap for menu", 2, C_MUTED);
+    std::string status = s_vm_up ? "Muse linked" : "connecting";
+    int big = fitScale("MUSECORDER", 3), st = fitScale(status, 2), hint = fitScale("tap for menu", 2);
+    int y = s_screen_h / 2 - 8 * big - 12;
+    drawText(y, "MUSECORDER", big, C_BIG);            y += 8 * big + 12;
+    drawText(y, status, st, C_MUTED);                 y += 8 * st + 8;
+    drawText(y, "tap for menu", hint, C_MUTED);
     s_idle_shown = true;
 }
-static void showIdle() { if (s_rot) drawIdle(); else led_status_show_animation(); }
+static void showIdle() { if (s_rot || s_screen_h > s_screen_w) drawIdle(); else led_status_show_animation(); }   // drawIdle for any portrait panel (native, like the StickS3, or rotated); Meta's animation only draws landscape
 static void drawBar(int y, double frac, int h) {
     int x0 = 16, w = s_screen_w - 32, fill = (int)(w * (frac < 0 ? 0 : frac > 1 ? 1 : frac));
     fillRect(0, y, s_screen_w, h, C_BG); fillRect(x0, y, w, h, C_BAR_BG); if (fill > 0) fillRect(x0, y, fill, h, C_BAR);
@@ -891,6 +908,32 @@ static void doDrawText(cJSON *d) {   // draw.text{x?,y,text,scale,color}: x omit
     else { int x = (int)fromJson(xj).asNum(); int w = (int)t.size() * (PIXEL_FONT_WIDTH * scale + scale); drawTextIn(x, y, w, t, scale, c, C_BG); }
 }
 
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#define MC_IR_DEFAULT_PIN 46       // StickS3's on-board IR LED (on the PMIC 5 V rail)
+#else
+#define MC_IR_DEFAULT_PIN -1       // other boards: the applet must name a pin
+#endif
+static bool irArm(cJSON *x) {
+    int pin = (int)numOf(x, "pin", MC_IR_DEFAULT_PIN);
+    if (pin < 0) { logf("ir: set a pin"); return false; }
+    if (!musecorder_ir_ready() && !musecorder_ir_init(pin)) { logf("ir: init failed"); return false; }
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    sticks3_pmic_5v(true);         // the IR LED hangs off the switchable 5 V rail
+#endif
+    return true;
+}
+static void doIrNec(cJSON *x) {
+    if (!irArm(x)) return;
+    musecorder_ir_nec((uint8_t)(int)numOf(x, "addr", 0), (uint8_t)(int)numOf(x, "cmd", 0));
+}
+static void doIrRaw(cJSON *x) {
+    if (!irArm(x)) return;
+    cJSON *us = cJSON_GetObjectItem(x, "us"); if (!cJSON_IsArray(us)) return;
+    int n = cJSON_GetArraySize(us); if (n < 1 || n > 256) { logf("ir.raw: 1..256 values"); return; }
+    uint16_t *buf = (uint16_t *)malloc((size_t)n * sizeof(uint16_t)); if (!buf) return;
+    for (int i = 0; i < n; i++) buf[i] = (uint16_t)clampi((int)fromJson(cJSON_GetArrayItem(us, i)).asNum(), 0, 65535);
+    musecorder_ir_raw(buf, (size_t)n); free(buf);
+}
 static void runOne(cJSON *a, int depth) {
     if (!cJSON_IsObject(a) || depth > 6) return;
     if (cJSON *x = cJSON_GetObjectItem(a, "set")) { cJSON *it = nullptr; cJSON_ArrayForEach(it, x) s_state[it->string] = fromJson(it); s_dirty_screen = s_dirty_state = true; }
@@ -907,6 +950,8 @@ static void runOne(cJSON *a, int depth) {
     if (cJSON *x = cJSON_GetObjectItem(a, "i2c.scan")) { doI2c("scan", x); s_dirty_screen = true; }
     if (cJSON *x = cJSON_GetObjectItem(a, "i2c.read")) { doI2c("read", x); s_dirty_screen = true; }
     if (cJSON *x = cJSON_GetObjectItem(a, "i2c.write")) doI2c("write", x);
+    if (cJSON *x = cJSON_GetObjectItem(a, "ir.nec")) doIrNec(x);
+    if (cJSON *x = cJSON_GetObjectItem(a, "ir.raw")) doIrRaw(x);
     if (cJSON *x = cJSON_GetObjectItem(a, "sd.append")) sdAppend(strOf(x, "file"), strOf(x, "text"));
     if (cJSON *x = cJSON_GetObjectItem(a, "sd.read")) { std::string to = strOf(x, "to"); s_state[to.empty() ? "sd" : to] = Value::S(sdTail(strOf(x, "file"), (size_t)numOf(x, "tail", 384))); s_dirty_screen = true; }
     if (cJSON *x = cJSON_GetObjectItem(a, "sd.fetch")) sdFetchStart(strOf(x, "path"), strOf(x, "file"));
@@ -1056,7 +1101,7 @@ static void goToSleep() {   // screen off; a touch wakes it. (Deep sleep garbles
 
 // ---------------------------------------------------------------- launcher (tap the title, or the idle screen)
 static int64_t s_repair_until = 0;
-#if MC_JOYSTICK
+#if MC_JOYSTICK || MC_BTN_NAV
 static int s_sel = 0;
 static std::vector<std::pair<std::string, std::string>> s_items;   // (label, event) for joystick menus
 static void drawList(const char *title) {
@@ -1092,7 +1137,10 @@ static void launcherDraw() {
 static void settingsDraw() {
     s_hits.clear(); s_menu = 1; s_items.clear();
     bool arming = s_repair_until > esp_timer_get_time();
+    char bb[40]; snprintf(bb, sizeof bb, "Brightness %d%%", s_bright); s_items.push_back({bb, "bright"});
+#if MC_JOYSTICK
     s_items.push_back({s_flip ? "Flip: 180" : "Flip: normal", "flip"});
+#endif
     s_items.push_back({musecorder_hid_mode_active() ? "Exit HID keyboard" : "HID keyboard mode", "hidmode"});
     s_items.push_back({"Reboot", "reboot"});
     s_items.push_back({arming ? "Re-pair: SURE?" : "Re-pair", "repair"});
@@ -1180,6 +1228,22 @@ static void launcherTap(const std::string &ev) {
     else if (!ev.compare(0, 4, "run:")) { std::string id = ev.substr(4); s_launcher = false; s_hits.clear(); if (!(s_running && id == s_app_id)) { if (!startStored(id, false)) { logf("launch %s failed", id.c_str()); launcherClose(); } } else launcherClose(); }
 }
 
+#if MC_JOYSTICK || MC_BTN_NAV
+// ---------------------------------------------------------------- cursor menu navigation (no touch panel)
+static void navMove(int delta) {
+    int n = (int)s_items.size(); if (n <= 0) return;
+    s_sel = ((s_sel + delta) % n + n) % n;
+    if (s_menu == 1) settingsDraw(); else launcherDraw();
+}
+static void navSelect() {
+    int n = (int)s_items.size(); if (s_sel < 0 || s_sel >= n) return;
+    std::string ev = s_items[s_sel].second;
+    if (ev == "settings" || ev == "launcher") s_sel = 0;   // a different menu: cursor to top
+    launcherTap(ev);
+    if (s_launcher) { int m = (int)s_items.size(); s_sel = clampi(s_sel, 0, m - 1); }
+}
+#endif
+
 #if MC_JOYSTICK
 // ---------------------------------------------------------------- joystick navigation (no touch)
 #define JOY_VRX_CH ADC_CHANNEL_0   /* GPIO1 = A0 */
@@ -1194,18 +1258,6 @@ static void joyInit() {
     adc_oneshot_config_channel(s_adc, JOY_VRY_CH, &cc);
     gpio_reset_pin((gpio_num_t)JOY_SW_PIN); gpio_set_direction((gpio_num_t)JOY_SW_PIN, GPIO_MODE_INPUT); gpio_set_pull_mode((gpio_num_t)JOY_SW_PIN, GPIO_PULLUP_ONLY);
     s_joy_ready = true; ESP_LOGI(TAG, "joystick ready (VRx GPIO1, VRy GPIO2, SW GPIO5)");
-}
-static void navMove(int delta) {
-    int n = (int)s_items.size(); if (n <= 0) return;
-    s_sel = ((s_sel + delta) % n + n) % n;
-    if (s_menu == 1) settingsDraw(); else launcherDraw();
-}
-static void navSelect() {
-    int n = (int)s_items.size(); if (s_sel < 0 || s_sel >= n) return;
-    std::string ev = s_items[s_sel].second;
-    if (ev == "settings" || ev == "launcher") s_sel = 0;   // a different menu: cursor to top
-    launcherTap(ev);
-    if (s_launcher) { int m = (int)s_items.size(); s_sel = clampi(s_sel, 0, m - 1); }
 }
 static void navClose() {
     if (s_menu == 1) { s_sel = 0; launcherDraw(); }   // in settings: go back to the launcher
@@ -1256,6 +1308,34 @@ static void joyTick() {
     }
 }
 #endif  // MC_JOYSTICK
+
+#if MC_BTN_NAV
+// ---------------------------------------------------------------- button navigation (M5StickS3: blue=select, side=down)
+#define MC_BTN_DOWN_GPIO 12                 // KEY2, the right side button
+static volatile bool s_btn_select = false;  // the blue button (GPIO11), queued from pressCb
+static bool s_down_prev = false;
+static void btnNavInit() {
+    gpio_reset_pin((gpio_num_t)MC_BTN_DOWN_GPIO);
+    gpio_set_direction((gpio_num_t)MC_BTN_DOWN_GPIO, GPIO_MODE_INPUT);
+    gpio_set_pull_mode((gpio_num_t)MC_BTN_DOWN_GPIO, GPIO_PULLUP_ONLY);
+    ESP_LOGI(TAG, "button nav ready (blue GPIO11 = select, side GPIO%d = down)", MC_BTN_DOWN_GPIO);
+}
+static void btnNavTick() {
+    if (s_btn_select) {                      // blue button, handed over by pressCb
+        s_btn_select = false;
+        if (s_launcher) navSelect();
+        else if (!s_running) { if (link_pairing_confirmation_required()) app_touch_short_press(); else { s_sel = 0; launcherOpen(); } }
+        else s_tap_pending = true;           // applet running: boot:press
+    }
+    bool down = gpio_get_level((gpio_num_t)MC_BTN_DOWN_GPIO) == 0;
+    if (down && !s_down_prev) {              // falling edge = one step
+        if (s_launcher) navMove(1);
+        else if (!s_running) { s_sel = 0; launcherOpen(); }
+        else fire("btn:down");
+    }
+    s_down_prev = down;
+}
+#endif  // MC_BTN_NAV
 
 // ---------------------------------------------------------------- touch dispatch
 static bool s_down = false, s_wiz_wait_up = false, s_held = false; static int s_dx = 0, s_dy = 0, s_ox = 0, s_oy = 0, s_down_n = 0, s_up_n = 0;
@@ -1342,6 +1422,9 @@ static void tickTask(void *) {
 #if MC_JOYSTICK
         joyTick();
 #endif
+#if MC_BTN_NAV
+        btnNavTick();
+#endif
         if (s_tone_on && now >= s_tone_until) toneNext(now);
         if (s_running) {
             for (auto &t : s_timers) if (now >= t.next) { t.next = now + (int64_t)t.period_ms * 1000; fire(t.key); }
@@ -1354,7 +1437,7 @@ static void tickTask(void *) {
                 if (s_dirty_state && now - s_last_save > 2000000) saveState();
             }
         } else s_tap_pending = false;
-        if (s_rot && !s_running && !s_launcher && s_wiz < 0 && !s_idle_shown) drawIdle();
+        if ((s_rot || s_screen_h > s_screen_w) && !s_running && !s_launcher && s_wiz < 0 && !s_idle_shown) drawIdle();
         xSemaphoreGive(s_lock);
     }
 }
@@ -1374,6 +1457,9 @@ extern "C" void musecorder_init(void) {
     joyInit();
     ssd1306_set_flip(s_flip);   // apply the saved 180 orientation to the OLED
 #endif
+#if MC_BTN_NAV
+    btnNavInit();
+#endif
     if (s_bright < 100) blApply(s_bright);
     s_last_touch_us = esp_timer_get_time();
     button_set_press_cb(pressCb);
@@ -1384,8 +1470,15 @@ extern "C" void musecorder_vm_connected(void) { s_vm_up = true; s_vm_gen = s_vm_
 extern "C" void musecorder_session_starved(void) { s_starved = true; }
 extern "C" void musecorder_screen_reset(void) { s_cleared = false; s_dirty_screen = true; if (s_launcher) s_launcher = false; }
 static bool pressCb(bool pressed) {
-    if (s_running && pressed) s_tap_pending = true;   // instant boot:press for the applet
+    if (!pressed) return false;
+#if MC_BTN_NAV
+    if (s_running && !s_launcher) { s_tap_pending = true; return false; }   // applet: boot:press; link keeps its hold-to-reset
+    s_btn_select = true;   // menu select / open / confirm pairing -- acted on under s_lock in the tick task
+    return true;           // claim the blue press so the link layer does not also retry Wi-Fi
+#else
+    if (s_running) s_tap_pending = true;   // instant boot:press for the applet
     return false;   // not claimed: a 5 s hold still resets setup (re-pair, new Wi-Fi) while an applet runs
+#endif
 }
 extern "C" bool musecorder_on_tap(void) {
     return s_running;   // the press callback already queued it; skip Meta's (idle) short-press handling

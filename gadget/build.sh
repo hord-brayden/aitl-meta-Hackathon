@@ -6,7 +6,7 @@
 # (gadgets.muse.ai > Account > SDK tokens). Without a token the build warns; you can send it later over serial.
 set -euo pipefail
 BOARD="${BOARD:-cyd24}"   # cyd24 = 2.4" ILI9341 board, cyd40 = Hosyond 4" ST7796 board
-TARGET=esp32; case "$BOARD" in nano|4827) TARGET=esp32s3;; esac   # Nano ESP32 and ESP32-4827S043 are ESP32-S3
+TARGET=esp32; case "$BOARD" in nano|4827|sticks3) TARGET=esp32s3;; esac   # Nano ESP32, ESP32-4827S043, M5Stack StickS3 are ESP32-S3
 cd "$(dirname "$0")/.."
 REPO="$PWD"
 # The SDK clone lives OUTSIDE the repo: ESP-IDF's response files break on paths with spaces (this repo sits in iCloud),
@@ -19,6 +19,8 @@ IDF="${IDF_PATH:-$HOME/esp/esp-idf-v6}"
 [ -f "$IDF/export.sh" ] || { echo "ESP-IDF v6.0.1 not found at $IDF (see gadget/README.md)"; exit 1; }
 # shellcheck disable=SC1091
 . "$IDF/export.sh" >/dev/null
+# Every board (the StickS3 included) is a self-contained overlay on sdkconfig.defaults:
+# MUSE_ENABLED off, the Musecorder applet engine on, its own display backend.
 DEFAULTS="sdkconfig.defaults;devices/sdkconfig.$BOARD"
 TOKEN="$(grep -E '^MUSE_GADGET_SDK_TOKEN=' "$REPO/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'" || true)"
 if [ -n "$TOKEN" ]; then
