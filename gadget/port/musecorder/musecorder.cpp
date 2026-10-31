@@ -651,7 +651,7 @@ static bool touchRaw() {
     if (!ok) return false;
     int pw = s_phys_w ? s_phys_w : s_screen_w, ph = s_phys_h ? s_phys_h : s_screen_h;
     int px = clampi(p[1] | (p[2] << 8), 0, pw - 1), py = clampi(p[3] | (p[4] << 8), 0, ph - 1);
-    if (s_rot) { s_raw_x = py; s_raw_y = pw - 1 - px; } else { s_raw_x = px; s_raw_y = py; }
+    if (s_rot) { s_raw_x = py; s_raw_y = pw - 1 - px; } else { s_raw_x = pw - 1 - px; s_raw_y = ph - 1 - py; }   // landscape flipped 180 to match the panel mirror
     return true;
 }
 static void calDefault() { s_cal = {true, 0, 0, s_screen_w - 1, 0, s_screen_h - 1}; }
