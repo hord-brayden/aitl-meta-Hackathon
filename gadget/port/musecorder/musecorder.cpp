@@ -23,6 +23,9 @@
 #include "musecorder_ir.h"
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
 #include "sticks3_lcd.h"
+extern "C" {
+#include "happy_anim.h"   // Meta's Muse "typing" status sprite (ungated for the stick in apply.py)
+}
 #endif
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -395,15 +398,51 @@ static void drawBattery(int y) {   // one centered line, refreshed in place: "BA
     drawTextIn(0, y, s_screen_w, b, fitScale("BAT 100% USB", 2), c, C_BG);
     s_batt_next = esp_timer_get_time() + 15000000;   // refresh every 15 s
 }
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+// Meta's Muse "typing" status sprite, played on the stick's idle screen. Same
+// frames and 130 ms cadence as Meta's boards, so it animates just as smoothly; we
+// render it here (musecorder owns the stick screen) instead of led_status's path.
+#define ANIM_SCALE 2
+#define ANIM_W (HAPPY_ANIM_WIDTH * ANIM_SCALE)    // 120
+#define ANIM_H (HAPPY_ANIM_HEIGHT * ANIM_SCALE)   // 120
+static int s_anim_x = 0, s_anim_y = 0, s_anim_frame = 0;
+static int64_t s_anim_next = 0;
+static void animDraw(int frame) {   // blit one scaled frame at (s_anim_x, s_anim_y), one sprite row per DMA
+    if (frame < 0 || frame >= HAPPY_ANIM_FRAMES) return;
+    const uint8_t *cells = happy_anim_frames[frame];
+    uint16_t row[ANIM_W * ANIM_SCALE];            // ANIM_SCALE output rows, pre-expanded
+    for (int cy = 0; cy < HAPPY_ANIM_HEIGHT; cy++) {
+        const uint8_t *src = cells + cy * HAPPY_ANIM_WIDTH;
+        for (int cx = 0; cx < HAPPY_ANIM_WIDTH; cx++) {   // palette is already panel byte-order
+            uint16_t px = happy_anim_palette[src[cx]];
+            for (int k = 0; k < ANIM_SCALE; k++) row[cx * ANIM_SCALE + k] = px;
+        }
+        for (int r = 1; r < ANIM_SCALE; r++) memcpy(row + r * ANIM_W, row, ANIM_W * sizeof(uint16_t));
+        mcDrawRect(s_anim_x, s_anim_y + cy * ANIM_SCALE, ANIM_W, ANIM_SCALE, row);
+    }
+    s_anim_next = esp_timer_get_time() + HAPPY_ANIM_FRAME_MS * 1000;
+}
+#endif
 static void drawIdle() {   // musecorder's own idle screen; used in portrait, where Meta's animation only draws landscape
     s_launcher = false; s_hits.clear(); s_cleared = false; fillRect(0, 0, s_screen_w, s_screen_h, C_BG);
     std::string status = s_vm_up ? "Muse linked" : "connecting";
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    s_anim_x = (s_screen_w - ANIM_W) / 2; if (s_anim_x < 0) s_anim_x = 0;
+    s_anim_y = 18;
+    animDraw(s_anim_frame);
+    int st = fitScale(status, 2), hint = fitScale("hold side = menu", 1);
+    int y = s_anim_y + ANIM_H + 12;
+    drawText(y, status, st, s_vm_up ? C_BIG : C_MUTED);   y += 8 * st + 8;
+    drawText(y, "hold side = menu", hint, C_MUTED);       y += 8 * hint + 12;
+    s_batt_y = y; drawBattery(y);
+#else
     int big = fitScale("MUSECORDER", 3), st = fitScale(status, 2), hint = fitScale("tap for menu", 2);
     int y = s_screen_h / 2 - 8 * big - 12;
     drawText(y, "MUSECORDER", big, C_BIG);            y += 8 * big + 12;
     drawText(y, status, st, C_MUTED);                 y += 8 * st + 8;
     drawText(y, "tap for menu", hint, C_MUTED);       y += 8 * hint + 14;
     s_batt_y = y; drawBattery(y);
+#endif
     s_idle_shown = true;
 }
 static void showIdle() { if (s_rot || s_screen_h > s_screen_w) drawIdle(); else led_status_show_animation(); }   // drawIdle for any portrait panel (native, like the StickS3, or rotated); Meta's animation only draws landscape
@@ -1472,7 +1511,12 @@ static void tickTask(void *) {
         } else s_tap_pending = false;
         if ((s_rot || s_screen_h > s_screen_w) && !s_running && !s_launcher && s_wiz < 0) {
             if (!s_idle_shown) drawIdle();
-            else if (s_batt_y >= 0 && now >= s_batt_next) drawBattery(s_batt_y);   // live % refresh
+            else {
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+                if (now >= s_anim_next) { s_anim_frame = (s_anim_frame + 1) % HAPPY_ANIM_FRAMES; animDraw(s_anim_frame); }
+#endif
+                if (s_batt_y >= 0 && now >= s_batt_next) drawBattery(s_batt_y);   // live % refresh
+            }
         }
         xSemaphoreGive(s_lock);
     }

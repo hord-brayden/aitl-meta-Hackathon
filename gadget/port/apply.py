@@ -604,6 +604,17 @@ if '"sticks3_lcd.c"' not in t:
     t = t.replace('    "ssd1306.c"\n', '    "ssd1306.c"\n    "sticks3_lcd.c"\n', 1)
     cm.write_text(t); print("  patched main/CMakeLists.txt (sticks3_lcd.c)")
 
+# Ungate the Muse "typing" status sprite (avatar/happy_anim.c) for the StickS3. It
+# is gated to CONFIG_HOMEHUB_DISPLAY boards; the stick is a separate backend, so
+# the sprite data isn't compiled there. Ungate it so musecorder can play the same
+# smooth animation on the stick's idle screen (costs ~115 KB flash; the stick has 8 MB).
+for _hap in ("happy_anim.c", "happy_anim.h"):   # both guard their bodies with CONFIG_HOMEHUB_DISPLAY
+    _p = root / "avatar" / _hap; _t = _p.read_text()
+    if "CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789" not in _t:
+        _t = _t.replace("#if CONFIG_HOMEHUB_DISPLAY\n",
+                        "#if CONFIG_HOMEHUB_DISPLAY || CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n", 1)
+        _p.write_text(_t); print(f"  patched avatar/{_hap} (ungate sprite for StickS3)")
+
 kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
 if '"M5Stack StickS3 1.14 inch ST7789 colour LCD"' not in t:
     t = t.replace("        config HOMEHUB_LED_BACKEND_SENSECAP_ST7701\n", (
