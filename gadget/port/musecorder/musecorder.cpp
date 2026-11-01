@@ -319,17 +319,27 @@ static uint16_t hexColor(const std::string &in, uint16_t dflt) { std::string h =
 
 static bool ensureStrip() { if (!s_strip && s_screen_w > 0) s_strip = (uint16_t *)malloc(s_screen_w * STRIP_ROWS * sizeof(uint16_t)); return s_strip != nullptr; }
 // Display rotation: a landscape-native panel can present a portrait UI. musecorder draws in logical
-// coords; mcDrawRect rotates each strip to physical coords. s_rot 0 = native, 1 = 90 degrees.
+// coords; mcDrawRect rotates each strip to physical coords.
+// s_rot 0 = native. 1 = 90 degrees. 2 = 90 the other way (landscape rotated 180),
+// so a portrait-native panel (StickS3) can face either way on the strap. The flip
+// is only different index math — no extra buffers or flash.
 static int s_phys_w = 0, s_phys_h = 0, s_rot = 0;
 static uint16_t *s_rotbuf = nullptr;
 static void mcDrawRect(int x, int y, int w, int h, const uint16_t *buf) {
     if (s_rot == 0) { led_status_draw_rect(x, y, w, h, buf); return; }
     if (!s_rotbuf) s_rotbuf = (uint16_t *)malloc(s_screen_w * STRIP_ROWS * sizeof(uint16_t));
     if (!s_rotbuf) return;
-    for (int pr = 0; pr < w; pr++)
-        for (int pc = 0; pc < h; pc++)
-            s_rotbuf[pr * h + pc] = buf[(h - 1 - pc) * w + pr];
-    led_status_draw_rect(s_phys_w - y - h, x, h, w, s_rotbuf);   // physical rect: w/h swapped
+    if (s_rot == 2) {   // landscape, 180 from s_rot==1
+        for (int pr = 0; pr < w; pr++)
+            for (int pc = 0; pc < h; pc++)
+                s_rotbuf[pr * h + pc] = buf[pc * w + (w - 1 - pr)];
+        led_status_draw_rect(y, s_phys_h - x - w, h, w, s_rotbuf);
+    } else {            // s_rot == 1
+        for (int pr = 0; pr < w; pr++)
+            for (int pc = 0; pc < h; pc++)
+                s_rotbuf[pr * h + pc] = buf[(h - 1 - pc) * w + pr];
+        led_status_draw_rect(s_phys_w - y - h, x, h, w, s_rotbuf);   // physical rect: w/h swapped
+    }
 }
 static void fillRect(int x, int y, int w, int h, uint16_t color) {
     if (!ensureStrip()) return;
@@ -386,16 +396,21 @@ static int battPct(bool *usb) {
     return -1;
 #endif
 }
-static int s_batt_y = -1;          // idle-screen row for the battery line (-1 = not drawn)
+// Largest scale (<= max) at which `txt` fits `width` px.
+static int fitScaleW(const std::string &txt, int max, int width) {
+    int sc = max; while (sc > 1 && (int)txt.size() * (PIXEL_FONT_WIDTH * sc + sc) > width) sc--; return sc;
+}
+static int s_batt_y = -1, s_batt_x = 0, s_batt_w = 0;   // idle-screen box for the battery line (-1 y = not drawn)
 static int64_t s_batt_next = 0;    // next refresh time (us)
-static void drawBattery(int y) {   // one centered line, refreshed in place: "BAT 87% USB"
+static void drawBattery(int y) {   // one line, refreshed in place: "BAT 87% USB"
     if (y < 0 || y + 16 > s_screen_h) return;
+    int bx = s_batt_w > 0 ? s_batt_x : 0, bw = s_batt_w > 0 ? s_batt_w : s_screen_w;
     bool usb = false; int pct = battPct(&usb);
     char b[24];
-    if (pct < 0) { if (!usb) { fillRect(0, y, s_screen_w, 16, C_BG); return; } snprintf(b, sizeof b, "USB"); }
+    if (pct < 0) { if (!usb) { fillRect(bx, y, bw, 16, C_BG); return; } snprintf(b, sizeof b, "USB"); }
     else snprintf(b, sizeof b, "BAT %d%%%s", pct, usb ? " USB" : "");
     uint16_t c = (pct >= 0 && pct <= 20) ? C_BAR : C_MUTED;
-    drawTextIn(0, y, s_screen_w, b, fitScale("BAT 100% USB", 2), c, C_BG);
+    drawTextIn(bx, y, bw, b, fitScaleW("BAT 100% USB", 2, bw), c, C_BG);
     s_batt_next = esp_timer_get_time() + 15000000;   // refresh every 15 s
 }
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
@@ -427,14 +442,26 @@ static void drawIdle() {   // musecorder's own idle screen; used in portrait, wh
     s_launcher = false; s_hits.clear(); s_cleared = false; fillRect(0, 0, s_screen_w, s_screen_h, C_BG);
     std::string status = s_vm_up ? "Muse linked" : "connecting";
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
-    s_anim_x = (s_screen_w - ANIM_W) / 2; if (s_anim_x < 0) s_anim_x = 0;
-    s_anim_y = 18;
-    animDraw(s_anim_frame);
-    int st = fitScale(status, 2), hint = fitScale("hold side = menu", 1);
-    int y = s_anim_y + ANIM_H + 12;
-    drawText(y, status, st, s_vm_up ? C_BIG : C_MUTED);   y += 8 * st + 8;
-    drawText(y, "hold side = menu", hint, C_MUTED);       y += 8 * hint + 12;
-    s_batt_y = y; drawBattery(y);
+    if (s_screen_w > s_screen_h) {   // landscape (240x135 on the watch strap): animation left, text column right
+        s_anim_x = 6; s_anim_y = (s_screen_h - ANIM_H) / 2; if (s_anim_y < 0) s_anim_y = 0;
+        animDraw(s_anim_frame);
+        int tx = s_anim_x + ANIM_W + 10, tw = s_screen_w - tx - 6;
+        int st = fitScaleW(status, 2, tw), hint = fitScaleW("hold side = menu", 1, tw);
+        int block = 8 * st + 10 + 8 * hint + 12 + 16;
+        int y = (s_screen_h - block) / 2; if (y < 4) y = 4;
+        drawTextIn(tx, y, tw, status, st, s_vm_up ? C_BIG : C_MUTED, C_BG);   y += 8 * st + 10;
+        drawTextIn(tx, y, tw, "hold side = menu", hint, C_MUTED, C_BG);        y += 8 * hint + 12;
+        s_batt_x = tx; s_batt_w = tw; s_batt_y = y; drawBattery(y);
+    } else {                         // portrait (135x240): animation hero on top
+        s_anim_x = (s_screen_w - ANIM_W) / 2; if (s_anim_x < 0) s_anim_x = 0;
+        s_anim_y = 18;
+        animDraw(s_anim_frame);
+        int st = fitScale(status, 2), hint = fitScale("hold side = menu", 1);
+        int y = s_anim_y + ANIM_H + 12;
+        drawText(y, status, st, s_vm_up ? C_BIG : C_MUTED);   y += 8 * st + 8;
+        drawText(y, "hold side = menu", hint, C_MUTED);       y += 8 * hint + 12;
+        s_batt_x = 0; s_batt_w = s_screen_w; s_batt_y = y; drawBattery(y);
+    }
 #else
     int big = fitScale("MUSECORDER", 3), st = fitScale(status, 2), hint = fitScale("tap for menu", 2);
     int y = s_screen_h / 2 - 8 * big - 12;
@@ -1148,10 +1175,11 @@ static void blApply(int percent) {
     int d = percent <= 0 ? 0 : percent >= 100 ? 255 : 8 + percent * 247 / 100;
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_4, d); ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_4);
 }
+static bool s_cfg_present = false;   // true once a saved cfg has been read (so defaults only apply on a fresh device)
 static void cfgLoad() {   // the default NVS partition, so settings persist even on boards without the applets partition
     nvs_handle_t h; if (nvs_open("mc_cfg", NVS_READONLY, &h) != ESP_OK) return;
     char t[40] = {0}; size_t n = sizeof t;
-    if (nvs_get_str(h, "cfg", t, &n) == ESP_OK) { int b, o, r = 0, f = 0; int k = sscanf(t, "%d %d %d %d", &b, &o, &r, &f); if (k >= 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; if (k >= 3) s_rot = r ? 1 : 0; if (k >= 4) s_flip = f != 0; } }
+    if (nvs_get_str(h, "cfg", t, &n) == ESP_OK) { s_cfg_present = true; int b, o, r = 0, f = 0; int k = sscanf(t, "%d %d %d %d", &b, &o, &r, &f); if (k >= 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; if (k >= 3) s_rot = r < 0 ? 0 : r > 2 ? 2 : r; if (k >= 4) s_flip = f != 0; } }
     nvs_close(h);
 }
 static void cfgSave() {
@@ -1208,6 +1236,10 @@ static void settingsDraw() {
 #if MC_JOYSTICK
     s_items.push_back({s_flip ? "Flip: 180" : "Flip: normal", "flip"});
 #endif
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    s_items.push_back({s_rot ? "Go portrait" : "Go landscape", "orient"});   // portrait(0) <-> landscape(1)
+    if (s_rot) s_items.push_back({"Flip 180", "flipland"});                   // in landscape: pick which way is up (1 <-> 2)
+#endif
     s_items.push_back({musecorder_hid_mode_active() ? "Exit HID keyboard" : "HID keyboard mode", "hidmode"});
     s_items.push_back({"Reboot", "reboot"});
     s_items.push_back({arming ? "Re-pair: SURE?" : "Re-pair", "repair"});
@@ -1255,7 +1287,12 @@ static void settingsDraw() {
     char b[40]; std::vector<std::pair<std::string, std::string>> items;
     snprintf(b, sizeof b, "Brightness %d%%", s_bright); items.push_back({b, "bright"});
     snprintf(b, sizeof b, "Screen off: %s", s_off_min == 0 ? "never" : s_off_min == 2 ? "2 min" : s_off_min == 10 ? "10 min" : "30 min"); items.push_back({b, "off"});
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    items.push_back({s_rot ? "Go portrait" : "Go landscape", "orient"});   // portrait(0) <-> landscape(1)
+    if (s_rot) items.push_back({"Flip 180", "flipland"});                   // in landscape: pick which way is up (1 <-> 2)
+#else
     if (s_phys_w > s_phys_h) items.push_back({s_rot ? "Go landscape" : "Go portrait", "orient"});
+#endif
     items.push_back({musecorder_hid_mode_active() ? "Exit HID keyboard" : "HID keyboard mode", "hidmode"});
     items.push_back({"Reboot", "reboot"});
     items.push_back({"Sleep", "sleep"});
@@ -1284,6 +1321,7 @@ static void launcherTap(const std::string &ev) {
     }
     else if (ev == "reboot") { clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rebooting", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(300)); blApply(0); esp_restart(); }
     else if (ev == "orient") { s_rot = !s_rot; cfgSave(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rotating", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(400)); blApply(0); esp_restart(); }
+    else if (ev == "flipland") { s_rot = s_rot == 2 ? 1 : 2; cfgSave(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, "flipping", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(400)); blApply(0); esp_restart(); }
     else if (ev == "sleep") goToSleep();
     else if (ev == "calibrate") { if (s_touch_ok) wizStart(); }
     else if (ev == "hidmode") { bool on = !musecorder_hid_mode_active(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, on ? "entering HID mode" : "back to Muse", 2, C_TEXT); vTaskDelay(pdMS_TO_TICKS(400)); musecorder_hid_set_mode(on); }
@@ -1528,7 +1566,11 @@ extern "C" void musecorder_init(void) {
     if (!led_status_display_info(&s_phys_w, &s_phys_h)) { s_phys_w = s_phys_h = 0; }
     storeInit();
     cfgLoad();
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    if (!s_cfg_present) s_rot = 1;   // fresh StickS3 (watch) defaults to landscape; once chosen, portrait(0)/landscape(1,2) are respected
+#else
     if (s_phys_w <= s_phys_h) s_rot = 0;   // rotation only makes sense on a landscape-native panel
+#endif
     if (s_phys_w > 0) { s_screen_w = s_rot ? s_phys_h : s_phys_w; s_screen_h = s_rot ? s_phys_w : s_phys_h; }
     else s_screen_w = 0;
     s_touch_ok = s_screen_w > 0 && touchInit();
