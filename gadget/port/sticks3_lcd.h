@@ -30,6 +30,11 @@ void sticks3_lcd_brightness(int pct);
 // display bring-up leaves it off; enable it before driving IR. False if the PMIC
 // isn't up yet.
 bool sticks3_pmic_5v(bool on);
+// Read the battery from the M5PM1 PMIC. On success *millivolt is the battery
+// voltage in mV and *usb is true when USB / the 5 V input is present (the PM1 has
+// no real charge-status register, so USB-present is the charging proxy). Either
+// pointer may be NULL. Returns false if the PMIC isn't up yet.
+bool sticks3_battery(uint16_t *millivolt, bool *usb);
 int sticks3_lcd_width(void);
 int sticks3_lcd_height(void);
 

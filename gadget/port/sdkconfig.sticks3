@@ -23,9 +23,11 @@ CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
-# 8 MB flash needs a fitting table; reuse Meta's 8 MB layout (nvs + dual OTA).
+# 8 MB flash. Meta's 8 MB layout (nvs + dual OTA) plus the Musecorder "applets"
+# NVS partition the applet store/launcher/persistence require — without it applets
+# run live but can't be saved, re-opened or survive a reboot.
 CONFIG_PARTITION_TABLE_CUSTOM=y
-CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_muse_8mb.csv"
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_sticks3.csv"
 
 # 8 MB OCTAL PSRAM (holds the Muse control session's buffers).
 CONFIG_SPIRAM=y

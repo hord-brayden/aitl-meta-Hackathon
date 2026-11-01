@@ -368,6 +368,33 @@ static int fitScale(const std::string &txt, int maxscale) {
     while (sc > 1 && (int)txt.size() * (PIXEL_FONT_WIDTH * sc + sc) > s_screen_w) sc--;
     return sc;
 }
+// Battery (StickS3 only; the CYD/4827 are USB-powered and have no PMIC gauge).
+// Returns -1 when unknown, else 0..100 percent; *usb is set when USB/5 V-in is
+// present (the M5PM1 has no charge-status register, so that is the charging proxy).
+static int battPct(bool *usb) {
+    if (usb) *usb = false;
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    uint16_t mv = 0; bool u = false;
+    if (!sticks3_battery(&mv, &u) || mv < 2500) return -1;   // <2.5 V: no cell / bad read
+    if (usb) *usb = u;
+    int pct = (mv - 3300) * 100 / (4200 - 3300);   // ~3.30 V empty .. 4.20 V full, approx LiPo
+    return pct < 0 ? 0 : pct > 100 ? 100 : pct;
+#else
+    return -1;
+#endif
+}
+static int s_batt_y = -1;          // idle-screen row for the battery line (-1 = not drawn)
+static int64_t s_batt_next = 0;    // next refresh time (us)
+static void drawBattery(int y) {   // one centered line, refreshed in place: "BAT 87% USB"
+    if (y < 0 || y + 16 > s_screen_h) return;
+    bool usb = false; int pct = battPct(&usb);
+    char b[24];
+    if (pct < 0) { if (!usb) { fillRect(0, y, s_screen_w, 16, C_BG); return; } snprintf(b, sizeof b, "USB"); }
+    else snprintf(b, sizeof b, "BAT %d%%%s", pct, usb ? " USB" : "");
+    uint16_t c = (pct >= 0 && pct <= 20) ? C_BAR : C_MUTED;
+    drawTextIn(0, y, s_screen_w, b, fitScale("BAT 100% USB", 2), c, C_BG);
+    s_batt_next = esp_timer_get_time() + 15000000;   // refresh every 15 s
+}
 static void drawIdle() {   // musecorder's own idle screen; used in portrait, where Meta's animation only draws landscape
     s_launcher = false; s_hits.clear(); s_cleared = false; fillRect(0, 0, s_screen_w, s_screen_h, C_BG);
     std::string status = s_vm_up ? "Muse linked" : "connecting";
@@ -375,7 +402,8 @@ static void drawIdle() {   // musecorder's own idle screen; used in portrait, wh
     int y = s_screen_h / 2 - 8 * big - 12;
     drawText(y, "MUSECORDER", big, C_BIG);            y += 8 * big + 12;
     drawText(y, status, st, C_MUTED);                 y += 8 * st + 8;
-    drawText(y, "tap for menu", hint, C_MUTED);
+    drawText(y, "tap for menu", hint, C_MUTED);       y += 8 * hint + 14;
+    s_batt_y = y; drawBattery(y);
     s_idle_shown = true;
 }
 static void showIdle() { if (s_rot || s_screen_h > s_screen_w) drawIdle(); else led_status_show_animation(); }   // drawIdle for any portrait panel (native, like the StickS3, or rotated); Meta's animation only draws landscape
@@ -1313,7 +1341,8 @@ static void joyTick() {
 // ---------------------------------------------------------------- button navigation (M5StickS3: blue=select, side=down)
 #define MC_BTN_DOWN_GPIO 12                 // KEY2, the right side button
 static volatile bool s_btn_select = false;  // the blue button (GPIO11), queued from pressCb
-static bool s_down_prev = false;
+static bool s_down_prev = false, s_down_long = false;
+static int64_t s_down_since = 0;
 static void btnNavInit() {
     gpio_reset_pin((gpio_num_t)MC_BTN_DOWN_GPIO);
     gpio_set_direction((gpio_num_t)MC_BTN_DOWN_GPIO, GPIO_MODE_INPUT);
@@ -1321,6 +1350,7 @@ static void btnNavInit() {
     ESP_LOGI(TAG, "button nav ready (blue GPIO11 = select, side GPIO%d = down)", MC_BTN_DOWN_GPIO);
 }
 static void btnNavTick() {
+    int64_t now = esp_timer_get_time();
     if (s_btn_select) {                      // blue button, handed over by pressCb
         s_btn_select = false;
         if (s_launcher) navSelect();
@@ -1328,7 +1358,10 @@ static void btnNavTick() {
         else s_tap_pending = true;           // applet running: boot:press
     }
     bool down = gpio_get_level((gpio_num_t)MC_BTN_DOWN_GPIO) == 0;
-    if (down && !s_down_prev) {              // falling edge = one step
+    if (down && !s_down_prev) { s_down_since = now; s_down_long = false; }        // press begins
+    else if (down && !s_down_long && now - s_down_since > 700000) {               // held ~0.7 s: open the menu from anywhere, including a running applet (the way out)
+        s_down_long = true; s_sel = 0; launcherOpen();
+    } else if (!down && s_down_prev && !s_down_long) {                            // short tap
         if (s_launcher) navMove(1);
         else if (!s_running) { s_sel = 0; launcherOpen(); }
         else fire("btn:down");
@@ -1437,7 +1470,10 @@ static void tickTask(void *) {
                 if (s_dirty_state && now - s_last_save > 2000000) saveState();
             }
         } else s_tap_pending = false;
-        if ((s_rot || s_screen_h > s_screen_w) && !s_running && !s_launcher && s_wiz < 0 && !s_idle_shown) drawIdle();
+        if ((s_rot || s_screen_h > s_screen_w) && !s_running && !s_launcher && s_wiz < 0) {
+            if (!s_idle_shown) drawIdle();
+            else if (s_batt_y >= 0 && now >= s_batt_next) drawBattery(s_batt_y);   // live % refresh
+        }
         xSemaphoreGive(s_lock);
     }
 }

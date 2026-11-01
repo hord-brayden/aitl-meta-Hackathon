@@ -39,6 +39,10 @@ static const char *TAG = "sticks3_lcd";
 #define PMIC_GPIO_OD  0x13         // 1 = open drain (the PMIC's default)
 #define PMIC_L3B      (1 << 2)     // LCD and audio power
 #define PMIC_SPK      (1 << 3)     // amp enable (kept off here: no audio)
+// Battery/VIN ADC and power-source registers (M5PM1, per M5Unified's driver).
+#define PMIC_PWR_SRC  0x04         // bit0: 5V-in (USB) valid; bit2: VBAT node valid
+#define PMIC_SRC_VIN  0x01
+#define PMIC_VBAT_L   0x22         // battery voltage, 2 bytes little-endian, direct mV
 
 static i2c_master_bus_handle_t s_bus;
 static i2c_master_dev_handle_t s_pmic;
@@ -201,6 +205,15 @@ bool sticks3_lcd_ready(void) { return s_ready; }
 bool sticks3_pmic_5v(bool on) {
     if (!s_pmic) return false;   // PMIC not up yet
     return pmic_update(PMIC_PWR_CFG, PMIC_PWR_5V, on) == ESP_OK;
+}
+
+bool sticks3_battery(uint16_t *millivolt, bool *usb) {
+    if (!s_pmic) return false;   // PMIC not up yet
+    uint8_t v[2];
+    if (pmic_read(PMIC_VBAT_L, v, 2) != ESP_OK) return false;
+    if (millivolt) *millivolt = (uint16_t)((v[1] << 8) | v[0]);   // direct mV
+    if (usb) { uint8_t s = 0; *usb = pmic_read(PMIC_PWR_SRC, &s, 1) == ESP_OK && (s & PMIC_SRC_VIN); }
+    return true;
 }
 
 bool sticks3_lcd_draw(int x, int y, int w, int h, const uint16_t *px) {
