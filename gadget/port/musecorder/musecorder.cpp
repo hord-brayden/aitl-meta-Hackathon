@@ -15,6 +15,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "esp_netif_sntp.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
@@ -455,20 +456,41 @@ static void animDraw(int frame) {   // blit one scaled frame at (s_anim_x, s_ani
     s_anim_next = esp_timer_get_time() + HAPPY_ANIM_FRAME_MS * 1000;
 }
 #endif
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+static int s_clock_x = 0, s_clock_w = 0, s_clock_y = -1;   // watch-face clock box (-1 y = not drawn)
+static int s_clock_min = -1;                               // last minute drawn, so we only repaint on a change
+static std::string nowClock() {   // "HH:MM" from the system clock (the Muse link sets it when online)
+    time_t t = time(nullptr); struct tm tm; localtime_r(&t, &tm);
+    char b[8]; snprintf(b, sizeof b, "%02d:%02d", tm.tm_hour, tm.tm_min); return b;
+}
+static void drawClock(int y) {
+    if (y < 0 || s_clock_w <= 0) return;
+    std::string clk = nowClock();
+    drawTextIn(s_clock_x, y, s_clock_w, clk, fitScaleW("00:00", 5, s_clock_w), C_BIG, C_BG);
+    time_t t = time(nullptr); struct tm tm; localtime_r(&t, &tm); s_clock_min = tm.tm_min;
+}
+static bool s_sntp_started = false;
+static void startClockSync() {   // real wall-clock time over Wi-Fi (NTP); the link doesn't set it
+    if (s_sntp_started) return;
+    s_sntp_started = true;
+    setenv("TZ", "MST7MDT,M3.2.0,M11.1.0", 1); tzset();   // US Mountain; change this string for another zone
+    esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    if (esp_netif_sntp_init(&cfg) == ESP_OK) logf("clock sync started (NTP, TZ Mountain)");
+    else logf("clock sync init failed");
+}
+#endif
 static void drawIdle() {   // musecorder's own idle screen; used in portrait, where Meta's animation only draws landscape
     s_launcher = false; s_hits.clear(); s_cleared = false; fillRect(0, 0, s_screen_w, s_screen_h, C_BG);
     std::string status = s_vm_up ? "Muse linked" : "connecting";
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
-    if (s_screen_w > s_screen_h) {   // landscape (240x135 on the watch strap): animation left, text column right
-        s_anim_x = 6; s_anim_y = (s_screen_h - ANIM_H) / 2; if (s_anim_y < 0) s_anim_y = 0;
-        animDraw(s_anim_frame);
-        int tx = s_anim_x + ANIM_W + 10, tw = s_screen_w - tx - 6;
-        int st = fitScaleW(status, 2, tw), hint = fitScaleW("hold side = menu", 1, tw);
-        int block = 8 * st + 10 + 8 * hint + 12 + 16;
-        int y = (s_screen_h - block) / 2; if (y < 4) y = 4;
-        drawTextIn(tx, y, tw, status, st, s_vm_up ? C_BIG : C_MUTED, C_BG);   y += 8 * st + 10;
-        drawTextIn(tx, y, tw, "hold side = menu", hint, C_MUTED, C_BG);        y += 8 * hint + 12;
-        s_batt_x = tx; s_batt_w = tw; s_batt_y = y; drawBattery(y);
+    if (s_screen_w > s_screen_h) {   // landscape (240x135 on the watch strap): a clean big-clock watch face
+        int cw = s_screen_w - 8;
+        int cs = fitScaleW("00:00", 6, cw), ss = fitScaleW(status, 1, cw);    // clock is the hero
+        int block = 8 * cs + 10 + 16 + 4 + 8 * ss;
+        int y = (s_screen_h - block) / 2; if (y < 2) y = 2;
+        s_clock_x = 4; s_clock_w = cw; s_clock_y = y; drawClock(y);           y += 8 * cs + 10;
+        s_batt_x = 4; s_batt_w = cw; s_batt_y = y; drawBattery(y);            y += 16 + 4;
+        drawTextIn(4, y, cw, status, ss, s_vm_up ? C_MUTED : C_BAR, C_BG);
     } else {                         // portrait (135x240): animation hero on top
         s_anim_x = (s_screen_w - ANIM_W) / 2; if (s_anim_x < 0) s_anim_x = 0;
         s_anim_y = 18;
@@ -1203,10 +1225,24 @@ static bool startStored(const std::string &id, bool fresh) {
 #define MC_PIN_BL 27
 #endif
 static int s_bright = 100, s_off_min = 0;   // persisted in the applet partition as "cfg"
+static int s_dim_sec = 15;                  // watch mode: seconds of stillness before the screen dims (0 = never dim)
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#define MC_DIM_PCT 10                        // always-on dim backlight level for the watch face
+static int64_t s_imu_next = 0;              // next IMU poll (for raise-to-brighten)
+static int16_t s_imu_prev[3] = {0, 0, 0};
+static bool s_imu_tried = false;
+#endif
 static bool s_flip = false;                  // joystick/OLED board: screen + stick rotated 180 for upside-down mounting
 static bool s_bl_ready = false, s_dim = false, s_swallow = false; static int64_t s_last_touch_us = 0;
 static int s_menu = 0;   // 0 launcher, 1 settings
 static void blApply(int percent) {
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    // The stick's backlight is GPIO38 behind the PMIC (sticks3_lcd). MC_PIN_BL (27) is a
+    // CYD pin and on the S3 it collides with the octal PSRAM, which crashes the device —
+    // so route brightness to the real driver and never touch GPIO27 here.
+    sticks3_lcd_brightness(percent);
+    return;
+#endif
     if (!s_bl_ready) {
         ledc_timer_config_t tc = {}; tc.speed_mode = LEDC_LOW_SPEED_MODE; tc.timer_num = LEDC_TIMER_1; tc.duty_resolution = LEDC_TIMER_8_BIT; tc.freq_hz = 5000; tc.clk_cfg = LEDC_AUTO_CLK;
         if (ledc_timer_config(&tc) != ESP_OK) return;
@@ -1221,12 +1257,12 @@ static bool s_cfg_present = false;   // true once a saved cfg has been read (so 
 static void cfgLoad() {   // the default NVS partition, so settings persist even on boards without the applets partition
     nvs_handle_t h; if (nvs_open("mc_cfg", NVS_READONLY, &h) != ESP_OK) return;
     char t[40] = {0}; size_t n = sizeof t;
-    if (nvs_get_str(h, "cfg", t, &n) == ESP_OK) { s_cfg_present = true; int b, o, r = 0, f = 0; int k = sscanf(t, "%d %d %d %d", &b, &o, &r, &f); if (k >= 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; if (k >= 3) s_rot = r < 0 ? 0 : r > 2 ? 2 : r; if (k >= 4) s_flip = f != 0; } }
+    if (nvs_get_str(h, "cfg", t, &n) == ESP_OK) { s_cfg_present = true; int b, o, r = 0, f = 0, d = 15; int k = sscanf(t, "%d %d %d %d %d", &b, &o, &r, &f, &d); if (k >= 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; if (k >= 3) s_rot = r < 0 ? 0 : r > 2 ? 2 : r; if (k >= 4) s_flip = f != 0; if (k >= 5) s_dim_sec = d < 0 ? 0 : d > 600 ? 600 : d; } }
     nvs_close(h);
 }
 static void cfgSave() {
     nvs_handle_t h; if (nvs_open("mc_cfg", NVS_READWRITE, &h) != ESP_OK) return;
-    char b[40]; snprintf(b, sizeof b, "%d %d %d %d", s_bright, s_off_min, s_rot, s_flip ? 1 : 0);
+    char b[48]; snprintf(b, sizeof b, "%d %d %d %d %d", s_bright, s_off_min, s_rot, s_flip ? 1 : 0, s_dim_sec);
     nvs_set_str(h, "cfg", b); nvs_commit(h); nvs_close(h);
 }
 static void screenWake() { if (s_dim) { s_dim = false; blApply(s_bright); } s_last_touch_us = esp_timer_get_time(); }
@@ -1286,6 +1322,7 @@ static void settingsDraw() {
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
     s_items.push_back({s_rot ? "Go portrait" : "Go landscape", "orient"});   // portrait(0) <-> landscape(1)
     if (s_rot) s_items.push_back({"Flip 180", "flipland"});                   // in landscape: pick which way is up (1 <-> 2)
+    { char db[28]; if (s_dim_sec == 0) snprintf(db, sizeof db, "Dim: never"); else snprintf(db, sizeof db, "Dim after %ds", s_dim_sec); s_items.push_back({db, "dim"}); }
     if (!irIds().empty()) s_items.push_back({"Clear IR codes", "irclear"});   // wipe learned IR entries
 #endif
     s_items.push_back({musecorder_hid_mode_active() ? "Exit HID keyboard" : "HID keyboard mode", "hidmode"});
@@ -1444,6 +1481,7 @@ static void launcherTap(const std::string &ev) {
     else if (ev == "launcher") launcherDraw();
     else if (ev == "bright") { s_bright = s_bright > 60 ? 60 : s_bright > 30 ? 30 : s_bright > 10 ? 10 : 100; blApply(s_bright); cfgSave(); settingsDraw(); }
     else if (ev == "off") { s_off_min = s_off_min == 0 ? 2 : s_off_min == 2 ? 10 : s_off_min == 10 ? 30 : 0; cfgSave(); settingsDraw(); }
+    else if (ev == "dim") { s_dim_sec = s_dim_sec == 15 ? 30 : s_dim_sec == 30 ? 60 : s_dim_sec == 60 ? 0 : 15; s_dim = false; blApply(s_bright); s_last_touch_us = esp_timer_get_time(); cfgSave(); settingsDraw(); }
     else if (ev == "flip") {
 #if MC_JOYSTICK
         s_flip = !s_flip; ssd1306_set_flip(s_flip); cfgSave(); ESP_LOGI(TAG, "flip %d", (int)s_flip); settingsDraw();
@@ -1570,6 +1608,10 @@ static void btnNavInit() {
 }
 static void btnNavTick() {
     int64_t now = esp_timer_get_time();
+    if (s_blue_down || gpio_get_level((gpio_num_t)MC_BTN_DOWN_GPIO) == 0) {   // any button held: brighten + stay awake
+        if (s_dim) { s_dim = false; blApply(s_bright); }
+        s_last_touch_us = now;
+    }
 #if CONFIG_HOMEHUB_VOICE
     if (s_blue_down && !s_talking && now - s_blue_since > MC_PTT_HOLD_US) {   // blue held: start talking
         s_talking = true; s_blue_tap = false;
@@ -1706,7 +1748,20 @@ static void tickTask(void *) {
             if (!s_idle_shown) drawIdle();
             else {
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
-                if (now >= s_anim_next) { s_anim_frame = (s_anim_frame + 1) % HAPPY_ANIM_FRAMES; animDraw(s_anim_frame); }
+                // Watch mode: raise-to-brighten (IMU), always-on dim, and a clock.
+                if (now >= s_imu_next) {
+                    s_imu_next = now + 200000;   // poll at 5 Hz
+                    if (!s_imu_tried) { s_imu_tried = true; if (sticks3_imu_init()) logf("IMU ready (wrist-wake)"); else logf("IMU unavailable"); }
+                    int16_t a[3];
+                    if (sticks3_imu_read(a, nullptr)) {
+                        long motion = labs(a[0] - s_imu_prev[0]) + labs(a[1] - s_imu_prev[1]) + labs(a[2] - s_imu_prev[2]);
+                        s_imu_prev[0] = a[0]; s_imu_prev[1] = a[1]; s_imu_prev[2] = a[2];
+                        if (motion > 2500) { if (s_dim) { s_dim = false; blApply(s_bright); } s_last_touch_us = now; }   // wrist moved: wake/keep bright
+                    }
+                }
+                if (!s_dim && s_dim_sec > 0 && now - s_last_touch_us > (int64_t)s_dim_sec * 1000000LL) { s_dim = true; blApply(MC_DIM_PCT); }   // dim (never fully off)
+                if (!s_dim && s_screen_h > s_screen_w && now >= s_anim_next) { s_anim_frame = (s_anim_frame + 1) % HAPPY_ANIM_FRAMES; animDraw(s_anim_frame); }   // portrait only; animate only while bright
+                if (s_clock_y >= 0) { struct tm tm; time_t t = time(nullptr); localtime_r(&t, &tm); if (tm.tm_min != s_clock_min) drawClock(s_clock_y); }
 #endif
                 if (s_batt_y >= 0 && now >= s_batt_next) drawBattery(s_batt_y);   // live % refresh
             }
@@ -1743,7 +1798,11 @@ extern "C" void musecorder_init(void) {
     xTaskCreate(tickTask, "musecorder", 6144, nullptr, 3, nullptr);
     ESP_LOGI(TAG, "ready (%dx%d, touch %s, store %s)", s_screen_w, s_screen_h, s_touch_ok ? "yes" : "no", s_store_ok ? "ok" : "none");
 }
-extern "C" void musecorder_vm_connected(void) { s_vm_up = true; s_vm_gen = s_vm_gen + 1; s_idle_shown = false; }
+extern "C" void musecorder_vm_connected(void) { s_vm_up = true; s_vm_gen = s_vm_gen + 1; s_idle_shown = false;
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    startClockSync();   // Wi-Fi is up by now; sync the watch clock over NTP
+#endif
+}
 extern "C" void musecorder_session_starved(void) { s_starved = true; }
 extern "C" void musecorder_screen_reset(void) { s_cleared = false; s_dirty_screen = true; if (s_launcher) s_launcher = false; }
 static bool pressCb(bool pressed) {
