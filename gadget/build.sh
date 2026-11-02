@@ -6,7 +6,7 @@
 # (gadgets.muse.ai > Account > SDK tokens). Without a token the build warns; you can send it later over serial.
 set -euo pipefail
 BOARD="${BOARD:-cyd24}"   # cyd24 = 2.4" ILI9341 board, cyd40 = Hosyond 4" ST7796 board
-TARGET=esp32; case "$BOARD" in nano|4827|sticks3) TARGET=esp32s3;; esac   # Nano ESP32, ESP32-4827S043, M5Stack StickS3 are ESP32-S3
+TARGET=esp32; case "$BOARD" in nano|4827|sticks3|cyd28) TARGET=esp32s3;; esac   # Nano ESP32, ESP32-4827S043, M5Stack StickS3 are ESP32-S3
 cd "$(dirname "$0")/.."
 REPO="$PWD"
 # The SDK clone lives OUTSIDE the repo: ESP-IDF's response files break on paths with spaces (this repo sits in iCloud),

@@ -22,6 +22,9 @@
 #include "driver/i2c_master.h"
 #include "esp_adc/adc_oneshot.h"
 #include "musecorder_ir.h"
+#if CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+#include "cyd28_lcd.h"   // cyd28_lcd_brightness(): backlight is GPIO45, not the CYD default MC_PIN_BL
+#endif
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
 #include "sticks3_lcd.h"
 extern "C" {
@@ -88,6 +91,10 @@ static cJSON *errorResult(const char *code, const char *message);
 #define MC_BTN_NAV 1              // M5StickS3: no touch; blue btn (GPIO11)=select, side btn (GPIO12)=down
 #define MC_PIN_AMP_EN -1
 #define MC_TAP_SAMPLES 1
+#elif CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+#define MC_TOUCH_FT6336 1         // LCD Wiki 2.8" E32C28P: FT6336 capacitive touch on I2C0 (SDA 16, SCL 15, RST 18), address 0x38
+#define MC_PIN_AMP_EN -1
+#define MC_TAP_SAMPLES 2
 #else
 #define MC_TOUCH_CST820 1         // capacitive panel on I2C0: SDA 33, SCL 32, address 0x15
 #define MC_PIN_AMP_EN -1
@@ -625,6 +632,36 @@ static bool touchRaw() {
     int px = clampi(p[1] | (p[2] << 8), 0, pw - 1), py = clampi(p[3] | (p[4] << 8), 0, ph - 1);
     if (s_rot) { s_raw_x = py; s_raw_y = pw - 1 - px; } else { s_raw_x = px; s_raw_y = py; }
     return true;
+}
+static void calDefault() { s_cal = {true, 0, 0, s_screen_w - 1, 0, s_screen_h - 1}; }
+#elif MC_TOUCH_FT6336
+// FocalTech FT6336 capacitive controller on I2C0 (SDA 16, SCL 15), address 0x38. Same
+// touch-data layout as the CST8xx: reg 0x02 = point count, then XH/XL/YH/YL with the
+// high nibble in the *H byte. IMPORTANT: do NOT drive the vendor-labeled RST/INT pins
+// (IO18/IO17) -- driving IO18 jams the controller (every register reads 0x00, even under
+// a steady press); the board's power-on reset is enough. Confirmed on hardware.
+static i2c_master_bus_handle_t s_tbus = nullptr; static i2c_master_dev_handle_t s_tdev = nullptr;
+static bool touchInit() {
+    // Do NOT drive IO18/IO17: with IO18 driven as an output (RST per the vendor pinout),
+    // every touch register read back 0x00 even under a steady press -- likely contention
+    // with the chip's own line if the pinout is wrong. Rely on the board's power-on reset.
+    vTaskDelay(pdMS_TO_TICKS(50));
+    i2c_master_bus_config_t bc = {}; bc.i2c_port = I2C_NUM_0; bc.sda_io_num = GPIO_NUM_16; bc.scl_io_num = GPIO_NUM_15; bc.clk_source = I2C_CLK_SRC_DEFAULT; bc.glitch_ignore_cnt = 7; bc.flags.enable_internal_pullup = true;
+    if (i2c_new_master_bus(&bc, &s_tbus) != ESP_OK) return false;
+    i2c_device_config_t dc = {}; dc.dev_addr_length = I2C_ADDR_BIT_LEN_7; dc.device_address = 0x38; dc.scl_speed_hz = 100000;   // 100 kHz: tolerant of weak pull-ups (400 kHz gave intermittent all-zero reads)
+    if (i2c_master_bus_add_device(s_tbus, &dc, &s_tdev) != ESP_OK) return false;
+    uint8_t reg = 0xA3, id = 0;   // chip id (FT6336G ~ 0x64); log it, don't fail on the value
+    if (i2c_master_transmit_receive(s_tdev, &reg, 1, &id, 1, 50) != ESP_OK) { ESP_LOGW(TAG, "touch: no FT6336 at 0x38"); return false; }
+    ESP_LOGI(TAG, "FT6336 touch id 0x%02x", id);
+    return true;
+}
+static bool touchRaw() {
+    uint8_t reg = 0x02, b[5];
+    if (i2c_master_transmit_receive(s_tdev, &reg, 1, b, 5, 20) != ESP_OK) { if (s_touch_err++ % 200 == 0) ESP_LOGW(TAG, "ft6336 i2c read fail"); return false; }
+    if ((b[0] & 0x0F) != 1) return false;
+    int x = ((b[1] & 0x0F) << 8) | b[2], y = ((b[3] & 0x0F) << 8) | b[4];
+    if (x > 320 || y > 320) return false;   // raw is physical 240x320; the 3-tap wizard maps raw -> landscape screen
+    s_raw_x = x; s_raw_y = y; return true;
 }
 static void calDefault() { s_cal = {true, 0, 0, s_screen_w - 1, 0, s_screen_h - 1}; }
 #else   // no touch panel (joystick board): stubs so touchRead()/calLoad() still compile
@@ -1241,6 +1278,9 @@ static void blApply(int percent) {
     // CYD pin and on the S3 it collides with the octal PSRAM, which crashes the device —
     // so route brightness to the real driver and never touch GPIO27 here.
     sticks3_lcd_brightness(percent);
+    return;
+#elif CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+    cyd28_lcd_brightness(percent);   // backlight is GPIO45 via cyd28_lcd; MC_PIN_BL (27) is a PSRAM pin on the S3 -> crash/freeze
     return;
 #endif
     if (!s_bl_ready) {

@@ -1,0 +1,35 @@
+# LCD Wiki "2.8inch ESP32-S3 Display" (E32C28P): ESP32-S3 N16R8 (16 MB flash, 8 MB
+# OCTAL PSRAM), 2.8" 240x320 ILI9341V colour LCD on SPI, FT6336 capacitive touch on
+# I2C, mic + speaker + battery (deferred). The Musecorder/Link build, same shape as
+# sdkconfig.4827: MUSE_ENABLED stays off, the device pairs in the normal Muse app and
+# Muse codes applets for it. The panel is driven by our own backend (cyd28_lcd.c).
+# Self-contained overlay on sdkconfig.defaults; load last.
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# 2.8" 240x320 ILI9341 colour LCD (our self-contained SPI backend, cyd28_lcd.c).
+CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341=y
+# Applet runtime: Muse installs applets over the control session; FT6336 touch drives the launcher.
+CONFIG_HOMEHUB_MUSECORDER=y
+CONFIG_HOMEHUB_BLE_NAME_PREFIX="MuseGadget-CYD28"
+# BOOT key (GPIO0): confirms pairing / re-pair from the button (also touch stand-ins on screen).
+CONFIG_HOMEHUB_BUTTON_GPIO=0
+
+# 16 MB flash (eFuse reports quad-capable).
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+# 16 MB layout (nvs + dual OTA) plus the Musecorder "applets" NVS partition the applet
+# store/launcher/persistence require — without it applets run live but can't be saved,
+# re-opened or survive a reboot. nvs/otadata/phy keep Meta's offsets so bonds survive a reflash.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_cyd28_16mb.csv"
+
+# 8 MB OCTAL PSRAM (holds the Muse control session's buffers + the applet runtime).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_MODE_QUAD=n
+CONFIG_SPIRAM_SPEED_80M=y
+# Keep NimBLE's allocations in PSRAM so pairing has internal RAM to spare.
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
