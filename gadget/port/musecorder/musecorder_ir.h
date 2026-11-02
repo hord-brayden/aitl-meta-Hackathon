@@ -30,6 +30,10 @@ bool musecorder_ir_ready(void);
 // 38 kHz). Blocks until the frame is on the wire. No-op/false if not ready.
 bool musecorder_ir_nec(uint8_t address, uint8_t command);
 
+// Send an arbitrary 32-bit NEC frame (MSB byte first, each byte LSB first, 38 kHz),
+// e.g. Samsung power 0xE0E040BF. Blocks until done. No-op/false if not ready.
+bool musecorder_ir_nec32(uint32_t code);
+
 // Send a raw burst: durations in microseconds, alternating mark (carrier on) then
 // space (carrier off), starting with a mark. `carrier_hz` 0 keeps 38 kHz. Blocks
 // until done. Useful for protocols other than NEC, captured elsewhere.

@@ -1267,6 +1267,7 @@ static void launcherDraw() {
     }
     if (!any_applet) s_items.push_back({"(no applets yet)", "noop"});
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    s_items.push_back({"TV Off (scan)", "tvscan"});   // brute-force common TV power codes (transmit only)
     for (auto &id : irIds()) s_items.push_back({"IR " + id.substr(2), "irrun:" + id});   // id "ir1" -> "IR 1"
     s_items.push_back({"Learn IR", "irlearn"});
 #endif
@@ -1285,6 +1286,7 @@ static void settingsDraw() {
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
     s_items.push_back({s_rot ? "Go portrait" : "Go landscape", "orient"});   // portrait(0) <-> landscape(1)
     if (s_rot) s_items.push_back({"Flip 180", "flipland"});                   // in landscape: pick which way is up (1 <-> 2)
+    if (!irIds().empty()) s_items.push_back({"Clear IR codes", "irclear"});   // wipe learned IR entries
 #endif
     s_items.push_back({musecorder_hid_mode_active() ? "Exit HID keyboard" : "HID keyboard mode", "hidmode"});
     s_items.push_back({"Reboot", "reboot"});
@@ -1358,9 +1360,16 @@ static void doIrLearn() {   // capture a real remote's button and save it to the
     // (M5's own example: "Enable external power output for IR receiver module"); the
     // display bring-up leaves it off, so without this the demodulator is dark and
     // GPIO42 never sees a pulse -> every capture times out as "no signal".
+    // Bring the TX LED up first so GPIO46 is driven to its idle (LED off) level. The
+    // 5 V rail below powers both the TX LED and the receiver; an uncontrolled GPIO46
+    // can leave the LED emitting into the adjacent receiver, swamping it with noise.
+    if (!musecorder_ir_ready()) musecorder_ir_init(MC_IR_DEFAULT_PIN);
     sticks3_pmic_5v(true);
     vTaskDelay(pdMS_TO_TICKS(120));   // let the demodulator power up and settle
-    if (!musecorder_ir_rx_ready() && !musecorder_ir_rx_init(MC_IR_RX_PIN)) {
+    bool rdy = musecorder_ir_rx_ready();
+    ESP_LOGW(TAG, "irlearn: rx_ready=%d", (int)rdy);
+    if (!rdy && !musecorder_ir_rx_init(MC_IR_RX_PIN)) {
+        ESP_LOGW(TAG, "irlearn: rx_init FAILED");
         sticks3_pmic_5v(false);
         clearRows(0, s_screen_h); drawText(s_screen_h / 2, "IR RX fail", 2, C_BAR); vTaskDelay(pdMS_TO_TICKS(1200)); launcherDraw(); return;
     }
@@ -1369,7 +1378,9 @@ static void doIrLearn() {   // capture a real remote's button and save it to the
     drawText(y, "Point remote", fitScale("Point remote", 2), C_TEXT);
     drawText(y + 22, "press a button", fitScale("press a button", 2), C_MUTED);
     uint16_t buf[128]; size_t n = 0;
+    ESP_LOGW(TAG, "irlearn: capturing (8 s)...");
     bool ok = musecorder_ir_capture(buf, 128, &n, 8000);
+    ESP_LOGW(TAG, "irlearn: capture ok=%d edges=%u", (int)ok, (unsigned)n);
     sticks3_pmic_5v(false);   // done listening; drop the rail (its default state)
     clearRows(0, s_screen_h);
     if (!ok) { drawText(s_screen_h / 2, "no signal", 3, C_BAR); vTaskDelay(pdMS_TO_TICKS(1200)); launcherDraw(); return; }
@@ -1398,6 +1409,31 @@ static void doIrRun(const std::string &id) {   // replay a learned code
     clearRows(0, s_screen_h); drawText(s_screen_h / 2, ok ? "sent" : "send fail", 3, ok ? C_BIG : C_BAR);
     vTaskDelay(pdMS_TO_TICKS(600)); launcherDraw();
 }
+// Brute-force TV power: fire common power codes in turn until one turns the TV off
+// (how TV-B-Gone / universal remotes work). Uses only the transmitter, so it does
+// not depend on the IR receiver. Starter set — expand per the user's TV brand.
+static const uint32_t TV_POWER[] = {
+    0xE0E040BF,   // Samsung  power (toggle)
+    0xE0E019E6,   // Samsung  power off
+    0x20DF10EF,   // LG       power (toggle)
+    0x20DFA35C,   // LG       power off
+};
+static void doTvScan() {
+    if (!musecorder_ir_ready()) musecorder_ir_init(MC_IR_DEFAULT_PIN);
+    sticks3_pmic_5v(true);
+    int n = (int)(sizeof(TV_POWER) / sizeof(TV_POWER[0]));
+    for (int i = 0; i < n; i++) {
+        clearRows(0, s_screen_h);
+        char b[20]; snprintf(b, sizeof b, "TV %d/%d", i + 1, n);
+        drawText(s_screen_h / 2 - 8, b, 3, C_MUTED);
+        musecorder_ir_nec32(TV_POWER[i]);
+        logf("tvscan sent 0x%08X", (unsigned)TV_POWER[i]);
+        vTaskDelay(pdMS_TO_TICKS(400));   // give the TV time to react between codes
+    }
+    sticks3_pmic_5v(false);
+    clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 8, "done", 3, C_BIG);
+    vTaskDelay(pdMS_TO_TICKS(700)); launcherDraw();
+}
 #endif
 static void launcherTap(const std::string &ev) {
     ESP_LOGI(TAG, "launcher: %s", ev.c_str());
@@ -1419,6 +1455,8 @@ static void launcherTap(const std::string &ev) {
     else if (ev == "sleep") goToSleep();
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
     else if (ev == "irlearn") doIrLearn();
+    else if (ev == "tvscan") doTvScan();
+    else if (ev == "irclear") { irSetIds(std::vector<std::string>()); s_sel = 0; settingsDraw(); }
     else if (!ev.compare(0, 6, "irrun:")) doIrRun(ev.substr(6));
 #endif
     else if (ev == "calibrate") { if (s_touch_ok) wizStart(); }
@@ -1536,9 +1574,10 @@ static void btnNavTick() {
     if (s_blue_down && !s_talking && now - s_blue_since > MC_PTT_HOLD_US) {   // blue held: start talking
         s_talking = true; s_blue_tap = false;
         clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 8, "listening", 3, C_BIG);
+        ESP_LOGW(TAG, "voice: ptt start");
         voice_ptt(true);
     } else if (s_talking && !s_blue_down) {                                   // blue released: send the clip
-        s_talking = false; voice_ptt(false);
+        s_talking = false; ESP_LOGW(TAG, "voice: ptt stop"); voice_ptt(false);
         clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 8, "sent", 3, C_MUTED);
         vTaskDelay(pdMS_TO_TICKS(500));
         if (s_launcher) launcherDraw(); else if (s_running) s_dirty_screen = true; else showIdle();

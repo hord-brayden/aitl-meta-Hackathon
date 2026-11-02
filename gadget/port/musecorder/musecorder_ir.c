@@ -4,6 +4,7 @@
 #include "driver/rmt_tx.h"
 #include "driver/rmt_rx.h"
 #include "driver/rmt_encoder.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "esp_attr.h"
@@ -77,6 +78,23 @@ bool musecorder_ir_nec(uint8_t address, uint8_t command) {
     return send(syms, i);
 }
 
+bool musecorder_ir_nec32(uint32_t code) {
+    if (!s_ready) return false;
+    // Send a 32-bit IR code MSB-first with NEC timing. IR databases (IRremote, Flipper)
+    // print codes in this "as transmitted" MSB-first form, e.g. Samsung 0xE0E040BF or
+    // Vizio/LG 0x20DF10EF (= NEC address 4, command 8). Sending the raw 32 bits MSB-first
+    // reproduces that waveform exactly.
+    rmt_symbol_word_t syms[NEC_MAX_SYMBOLS];
+    size_t i = 0;
+    syms[i++] = mark_space(9000, 4500);                    // NEC leader
+    for (int bit = 31; bit >= 0; bit--) {                  // MSB first
+        if (code & (1u << bit)) syms[i++] = mark_space(560, 1690);   // 1
+        else                    syms[i++] = mark_space(560, 560);    // 0
+    }
+    syms[i++] = mark_space(560, 0);                        // stop mark
+    return send(syms, i);
+}
+
 bool musecorder_ir_raw(const uint16_t *durations_us, size_t count) {
     if (!s_ready || !durations_us || count == 0) return false;
     // Pack pairs of (mark, space) into symbols; an odd final mark gets a 0 space.
@@ -120,23 +138,28 @@ bool musecorder_ir_rx_init(int gpio) {
     rmt_rx_event_callbacks_t cbs = { .on_recv_done = rx_done_cb };
     if (rmt_rx_register_event_callbacks(s_rx_chan, &cbs, s_rx_queue) != ESP_OK) { ESP_LOGW(TAG, "rx cb"); return false; }
     if (rmt_enable(s_rx_chan) != ESP_OK) { ESP_LOGW(TAG, "rx enable"); return false; }
+    // The demodulator output idles HIGH and pulls low on a carrier burst. Without an
+    // internal pull-up the StickS3's GPIO42 floats, so RMT sees one spurious edge
+    // instead of the ~34 of a real frame. (Confirmed on this board's RX line.)
+    gpio_set_pull_mode((gpio_num_t)gpio, GPIO_PULLUP_ONLY);
     s_rx_ready = true;
-    ESP_LOGI(TAG, "IR RX up on GPIO%d", gpio);
+    ESP_LOGI(TAG, "IR RX up on GPIO%d (pull-up on)", gpio);
     return true;
 }
 
 bool musecorder_ir_rx_ready(void) { return s_rx_ready; }
 
 bool musecorder_ir_capture(uint16_t *out, size_t cap, size_t *count, int timeout_ms) {
-    if (!s_rx_ready || !out || !count || cap < 4) return false;
+    if (!s_rx_ready || !out || !count || cap < 4) { ESP_LOGW(TAG, "capture: not ready/bad args"); return false; }
     static rmt_symbol_word_t raw[IR_RX_SYMBOLS];
     rmt_receive_config_t rcfg = {
         .signal_range_min_ns = 1000,          // ignore pulses < 1 us (noise)
         .signal_range_max_ns = 12000000,      // a gap > 12 ms ends the burst
     };
-    if (rmt_receive(s_rx_chan, raw, sizeof(raw), &rcfg) != ESP_OK) return false;
+    esp_err_t e = rmt_receive(s_rx_chan, raw, sizeof(raw), &rcfg);
+    if (e != ESP_OK) { ESP_LOGW(TAG, "rmt_receive: %s", esp_err_to_name(e)); return false; }
     rmt_rx_done_event_data_t ev;
-    if (xQueueReceive(s_rx_queue, &ev, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) return false;
+    if (xQueueReceive(s_rx_queue, &ev, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) { ESP_LOGW(TAG, "capture: timed out (no pulses on GPIO)"); return false; }
     size_t n = 0;
     for (size_t i = 0; i < ev.num_symbols && n + 1 < cap; i++) {
         out[n++] = ev.received_symbols[i].duration0;      // mark
@@ -144,5 +167,9 @@ bool musecorder_ir_capture(uint16_t *out, size_t cap, size_t *count, int timeout
         out[n++] = ev.received_symbols[i].duration1;       // space
     }
     *count = n;
+    ESP_LOGI(TAG, "capture: %u symbols -> %u edges", (unsigned)ev.num_symbols, (unsigned)n);
+    char d[160]; int p = 0;                   // dump the first dozen durations so we can tell a real frame from noise
+    for (size_t i = 0; i < n && i < 12 && p < (int)sizeof(d) - 8; i++) p += snprintf(d + p, sizeof(d) - p, "%u ", out[i]);
+    ESP_LOGI(TAG, "  first us: %s", d);
     return n >= 4;   // a real remote press is at least a leader + one bit
 }
