@@ -271,6 +271,14 @@ static std::vector<std::string> storeIds() {
     free(txt); return ids;
 }
 static void storeSetIds(const std::vector<std::string> &ids) { std::string s; for (auto &i : ids) { if (!s.empty()) s += ","; s += i; } storeSet("ids", s.empty() ? nullptr : s.c_str()); }
+// Learned IR codes live in the same applet store, under "ir.*" keys: "ir.ids" is a
+// CSV of slot ids, "ir.<id>" is that code's durations as a CSV (microseconds).
+static std::vector<std::string> irIds() {
+    std::vector<std::string> ids; char *txt = storeGet("ir.ids", 128); if (!txt) return ids;
+    for (char *p = strtok(txt, ","); p; p = strtok(nullptr, ",")) if (*p) ids.push_back(p);
+    free(txt); return ids;
+}
+static void irSetIds(const std::vector<std::string> &ids) { std::string s; for (auto &i : ids) { if (!s.empty()) s += ","; s += i; } storeSet("ir.ids", s.empty() ? nullptr : s.c_str()); }
 static std::string key(const char *prefix, const std::string &id) { return std::string(prefix) + id; }
 static void storeDelete(const std::string &id) {
     auto ids = storeIds(); for (size_t i = 0; i < ids.size(); i++) if (ids[i] == id) { ids.erase(ids.begin() + i); break; }
@@ -308,6 +316,9 @@ static uint16_t *s_strip = nullptr;   // s_screen_w * STRIP_ROWS
 #if CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C
 #define TOP_CLEAR 0                   // the mono OLED has no Meta status bars
 #define BTN_H 13
+#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#define TOP_CLEAR 0                   // no Meta status bars here, and 135 px (landscape) is far too small to waste on margins
+#define BTN_H 26                      // the whole screen is ~135 px tall in landscape, so rows must be compact
 #else
 #define TOP_CLEAR 28                  // Meta's status bars live in the first and last rows
 #define BTN_H 44
@@ -390,7 +401,10 @@ static int battPct(bool *usb) {
     uint16_t mv = 0; bool u = false;
     if (!sticks3_battery(&mv, &u) || mv < 2500) return -1;   // <2.5 V: no cell / bad read
     if (usb) *usb = u;
-    int pct = (mv - 3300) * 100 / (4200 - 3300);   // ~3.30 V empty .. 4.20 V full, approx LiPo
+    // The PM1 has no fuel gauge, so this is a resting-voltage estimate. It also
+    // terminates charge a little below the 4.20 V datasheet max, so a fully charged
+    // cell sits ~4.15 V; mapping "full" to 4150 mV lets a topped-off pack read 100%.
+    int pct = (mv - 3300) * 100 / (4150 - 3300);   // ~3.30 V empty .. 4.15 V full, approx LiPo
     return pct < 0 ? 0 : pct > 100 ? 100 : pct;
 #else
     return -1;
@@ -1074,12 +1088,14 @@ static void renderScreen() {
     if (!s_cleared) { clearRows(0, s_screen_h); s_cleared = true; }
     s_hits.clear(); s_canvas = false;
     int y = top + 8;
+    bool short_h = s_screen_h < 160;   // landscape StickS3 (~135 px tall): shrink title/text so more than one row fits
+    int tsc = short_h ? 2 : 3;         // title and plain-text scale
     cJSON *name = cJSON_GetObjectItem(s_app, "name");
-    drawText(y, cJSON_IsString(name) ? name->valuestring : s_app_id, 3, C_MUTED); y += 8 * 3 + 12;
+    drawText(y, cJSON_IsString(name) ? name->valuestring : s_app_id, tsc, C_MUTED); y += 8 * tsc + (short_h ? 6 : 12);
     cJSON *screen = cJSON_GetObjectItem(s_app, "screen"); cJSON *it = nullptr;
     cJSON_ArrayForEach(it, screen) {
         if (y >= bottom - 16) break;
-        if (cJSON *t = cJSON_GetObjectItem(it, "text")) { drawText(y, render(cJSON_GetStringValue(t)).asStr(), 3, C_TEXT); y += 8 * 3 + 10; }
+        if (cJSON *t = cJSON_GetObjectItem(it, "text")) { drawText(y, render(cJSON_GetStringValue(t)).asStr(), tsc, C_TEXT); y += 8 * tsc + (short_h ? 6 : 10); }
         else if (cJSON *b = cJSON_GetObjectItem(it, "big")) { std::string t = render(cJSON_GetStringValue(b)).asStr(); int sc = 8; while (sc > 3 && (int)t.size() * (PIXEL_FONT_WIDTH * sc + sc) > s_screen_w) sc--; if (sc < 8) clearRows(y, y + 64); drawText(y + (64 - 8 * sc) / 2, t, sc, C_BIG); y += 8 * 8 + 14; }
         else if (cJSON *bar = cJSON_GetObjectItem(it, "bar")) { double mx = cJSON_GetObjectItem(it, "max") ? fromJson(cJSON_GetObjectItem(it, "max")).asNum() : 100; drawBar(y, mx > 0 ? fromJson(bar).asNum() / mx : 0, 16); y += 16 + 12; }
         else if (cJSON *g = cJSON_GetObjectItem(it, "gap")) { y += (int)fromJson(g).asNum(); }
@@ -1224,6 +1240,10 @@ static void launcherDraw() {
         s_items.push_back({label, "run:" + id}); any_applet = true;
     }
     if (!any_applet) s_items.push_back({"(no applets yet)", "noop"});
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    for (auto &id : irIds()) s_items.push_back({"IR " + id.substr(2), "irrun:" + id});   // id "ir1" -> "IR 1"
+    s_items.push_back({"Learn IR", "irlearn"});
+#endif
     s_items.push_back({s_running ? "Stop applet" : "Status", "status"});
     s_items.push_back({"Settings", "settings"});
     s_items.push_back({"Back", "back"});
@@ -1305,6 +1325,54 @@ static void settingsDraw() {
 #endif  // MC_JOYSTICK
 static void launcherOpen() { s_launcher = true; s_idle_shown = false; s_repair_until = 0; launcherDraw(); ESP_LOGI(TAG, "launcher open"); }
 static void launcherClose() { s_launcher = false; s_hits.clear(); s_cleared = false; if (s_running) s_dirty_screen = true; else showIdle(); }
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#define MC_IR_RX_PIN 42   // StickS3's IR receiver output (demodulated envelope)
+static void doIrLearn() {   // capture a real remote's button and save it to the next IR slot
+    // The StickS3's IR receiver module is fed by the PMIC's switchable 5 V ext rail
+    // (M5's own example: "Enable external power output for IR receiver module"); the
+    // display bring-up leaves it off, so without this the demodulator is dark and
+    // GPIO42 never sees a pulse -> every capture times out as "no signal".
+    sticks3_pmic_5v(true);
+    vTaskDelay(pdMS_TO_TICKS(120));   // let the demodulator power up and settle
+    if (!musecorder_ir_rx_ready() && !musecorder_ir_rx_init(MC_IR_RX_PIN)) {
+        sticks3_pmic_5v(false);
+        clearRows(0, s_screen_h); drawText(s_screen_h / 2, "IR RX fail", 2, C_BAR); vTaskDelay(pdMS_TO_TICKS(1200)); launcherDraw(); return;
+    }
+    clearRows(0, s_screen_h);
+    int y = s_screen_h / 2 - 18;
+    drawText(y, "Point remote", fitScale("Point remote", 2), C_TEXT);
+    drawText(y + 22, "press a button", fitScale("press a button", 2), C_MUTED);
+    uint16_t buf[128]; size_t n = 0;
+    bool ok = musecorder_ir_capture(buf, 128, &n, 8000);
+    sticks3_pmic_5v(false);   // done listening; drop the rail (its default state)
+    clearRows(0, s_screen_h);
+    if (!ok) { drawText(s_screen_h / 2, "no signal", 3, C_BAR); vTaskDelay(pdMS_TO_TICKS(1200)); launcherDraw(); return; }
+    std::string csv; char t[8];
+    for (size_t i = 0; i < n; i++) { if (i) csv += ","; snprintf(t, sizeof t, "%u", buf[i]); csv += t; }
+    auto ids = irIds();
+    int slot = 1; while (slot <= 20) { std::string cand = "ir" + std::to_string(slot); bool used = false; for (auto &i : ids) if (i == cand) used = true; if (!used) break; slot++; }
+    std::string id = "ir" + std::to_string(slot);
+    storeSet(key("ir.", id).c_str(), csv.c_str());
+    ids.push_back(id); irSetIds(ids);
+    logf("IR learned %s (%u edges)", id.c_str(), (unsigned)n);
+    drawText(s_screen_h / 2, "learned!", 3, C_BIG); vTaskDelay(pdMS_TO_TICKS(900));
+    launcherDraw();
+}
+static void doIrRun(const std::string &id) {   // replay a learned code
+    char *csv = storeGet(key("ir.", id).c_str(), 2048);
+    if (!csv) { launcherDraw(); return; }
+    std::vector<uint16_t> d; char *p = csv;
+    while (*p) { long v = strtol(p, &p, 10); d.push_back((uint16_t)(v < 0 ? 0 : v > 65535 ? 65535 : v)); if (*p == ',') p++; else if (*p) break; }
+    free(csv);
+    clearRows(0, s_screen_h); drawText(s_screen_h / 2, "sending", 3, C_MUTED);
+    if (!musecorder_ir_ready()) musecorder_ir_init(MC_IR_DEFAULT_PIN);
+    sticks3_pmic_5v(true);
+    bool ok = !d.empty() && musecorder_ir_raw(d.data(), d.size());
+    sticks3_pmic_5v(false);
+    clearRows(0, s_screen_h); drawText(s_screen_h / 2, ok ? "sent" : "send fail", 3, ok ? C_BIG : C_BAR);
+    vTaskDelay(pdMS_TO_TICKS(600)); launcherDraw();
+}
+#endif
 static void launcherTap(const std::string &ev) {
     ESP_LOGI(TAG, "launcher: %s", ev.c_str());
     if (ev == "back") launcherClose();
@@ -1323,6 +1391,10 @@ static void launcherTap(const std::string &ev) {
     else if (ev == "orient") { s_rot = !s_rot; cfgSave(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rotating", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(400)); blApply(0); esp_restart(); }
     else if (ev == "flipland") { s_rot = s_rot == 2 ? 1 : 2; cfgSave(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, "flipping", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(400)); blApply(0); esp_restart(); }
     else if (ev == "sleep") goToSleep();
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    else if (ev == "irlearn") doIrLearn();
+    else if (!ev.compare(0, 6, "irrun:")) doIrRun(ev.substr(6));
+#endif
     else if (ev == "calibrate") { if (s_touch_ok) wizStart(); }
     else if (ev == "hidmode") { bool on = !musecorder_hid_mode_active(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, on ? "entering HID mode" : "back to Muse", 2, C_TEXT); vTaskDelay(pdMS_TO_TICKS(400)); musecorder_hid_set_mode(on); }
     else if (ev == "repair") {   // two taps within 8 s: the same as holding BOOT for 5 s (erase pairing, reboot into setup)
