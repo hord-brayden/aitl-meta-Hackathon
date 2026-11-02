@@ -34,7 +34,8 @@ StickS3-relevant ones:
 
 | Area | Verbs | Notes on this board |
 |---|---|---|
-| **IR remote** | `ir.nec{addr,cmd,pin}`, `ir.raw{us:[mark,space,…],pin}` | **New.** 38 kHz carrier. `pin` defaults to **46** here; the 5 V rail powers on automatically. `ir.raw` takes 1–256 microsecond durations, alternating mark/space, starting with a mark. |
+| **IR remote** | `ir.nec{addr,cmd,pin}`, `ir.raw{us:[mark,space,…],pin}` | 38 kHz carrier. `pin` defaults to **46** here; the 5 V rail powers on automatically. `ir.raw` takes 1–256 microsecond durations, alternating mark/space, starting with a mark. See also **IR learn** (device feature, below). |
+| **Motion (IMU)** | `imu.read{to}` | **New.** Samples the BMI270 and fills `<to>.ax/.ay/.az` (g, ±8 g), `<to>.gx/.gy/.gz` (°/s, ±2000), and `<to>.pitch/.roll` (degrees). Default `to` = `imu`. Call it in `every:SECONDS` to track tilt/taps. |
 | **Screen** | `draw.rect`, `draw.text`, `clear`, screen items (`text`,`big`,`bar`,`buttons`,`canvas`) | 135 × 240 portrait. Keep text ≤ scale 2 for width; the idle auto-fits. |
 | **Buttons** | events `boot:press` (blue), `btn:down` (side) | No touch — drive menus/actions from these two events. |
 | **GPIO/PWM/ADC** | `gpio.write/read`, `pwm`, `adc.read`, `gpio:PIN:rise\|fall\|change` watches | **Only on free pins — see the pin table below.** Most GPIOs are taken. |
@@ -51,29 +52,36 @@ StickS3-relevant ones:
 ```
 (NEC address/command vary by TV; capture them from the remote or try a code set.)
 
-## Hardware that is present but NOT yet bridged to applets
-Document these so Muse doesn't write applets that silently fail:
-- **IMU (BMI270 @ 0x68):** sits on the **internal** I²C bus (sda 47 / scl 48), which the
-  display driver holds. Applet `i2c.*` opens its *own* bus and must not fight that one,
-  so the IMU is not reachable from an applet yet. BMI270 also needs a ~8 KB config
-  upload before it reports motion. → needs a native `imu.read` verb (roadmap).
-- **Microphone / speaker (ES8311 + I²S):** there is no audio verb in the applet
-  engine, and `tone` expects a simple buzzer this board doesn't have. → needs a
-  native audio path (roadmap).
-- **IR receive (GPIO42):** only transmit is wired. Decoding needs the RMT RX path,
-  and per M5 the **amp must be off** or it swamps the receiver. → roadmap.
-- **BLE HID keyboard:** this is a **separate boot mode** (Settings → *HID keyboard
-  mode*, which reboots), not an applet action. In HID mode the device is a keyboard,
-  not a Muse gadget; toggle back to return to Musecorder.
+## Device features that are NOT applet verbs (driven from the device, not Muse)
+These are built into the firmware and used from the launcher/buttons, not written by
+an applet:
+- **IR learn** (launcher → **Learn IR**): captures a real remote's button on the RX
+  receiver (GPIO42) and stores it; the saved **IR N** entries replay it. The receiver
+  runs off the PMIC 5 V rail, which the learn flow powers for the capture (and the amp
+  is already off, as M5 requires for RX). Learned codes persist in the applets store.
+- **Push-to-talk voice** (hold the **blue** button): records the mic through the ES8311
+  codec and sends the clip to your Muse chat as a voice note; the VM transcribes it and
+  the reply comes back as text in the Muse app. Runs on the Link voice session, so it
+  coexists with applets. Mic is 16 kHz mono; a spoken (TTS) reply is a future add.
+- **BLE HID keyboard:** a **separate boot mode** (Settings → *HID keyboard mode*, which
+  reboots), not an applet action. In HID mode the device is a keyboard, not a Muse
+  gadget; toggle back to return to Musecorder.
+
+Still open (roadmap): exposing the mic/speaker to applets as an audio verb; IR-receive
+decoding into named protocols (today's learn stores the raw burst and replays it).
 
 ## Memory & storage limits
 - **Applet size ≤ 4 KB**, **≤ 5 applets**, event lists bounded (≤ 8 timers, ≤ 4 gpio watches).
-- **No persistence on this board.** There is no `applets` NVS partition and no SD card,
-  so applets **run live but do not survive a reboot** — nothing is stored, and
-  `persist` / saved state are no-ops. Re-install after a power cycle. (A custom
-  partition table could add storage later; not done, to keep pairing data untouched.)
-- **8 MB PSRAM** means RAM is comfortable, but still: keep allocations modest, keep
-  `http` responses small, and **never block** the loop (the UI and link run on it).
+- **Applets persist.** A dedicated **256 KB `applets` NVS partition** (added in
+  `partitions_sticks3.csv`) stores installed applets, their `persist` state, and learned
+  IR codes, so they **survive a reboot** and the launcher lists them. The `nvs` partition
+  keeps its original offset, so BLE bonds and Wi-Fi creds survive a reflash too.
+- **Flash:** the app is ~1.8 MB in a **3.25 MB** OTA slot (~46 % / ~1.5 MB free), so
+  there's plenty of room for more native features. No SD card on this board.
+- **RAM:** 512 KB internal SRAM + **8 MB octal PSRAM**. The voice task and audio buffers
+  live in PSRAM; applet buffers are small. RAM is comfortable — but still keep
+  allocations modest, keep `http` responses small, and **never block** the loop (the UI
+  and link run on it).
 
 ## Pin safety — do not brick it
 **Never** `gpio.write`/`pwm` these (they are wired to hardware or boot straps):
