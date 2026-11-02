@@ -12,6 +12,9 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789=y
 # Applet runtime: Muse installs applets over the control session.
 CONFIG_HOMEHUB_MUSECORDER=y
+# Push-to-talk voice chat: hold the blue button, speak, release; the clip goes to
+# the Muse chat as a voice note and the reply comes back as text in the app.
+CONFIG_HOMEHUB_VOICE=y
 CONFIG_HOMEHUB_BLE_NAME_PREFIX="MuseGadget-Stick"
 # KEY1, the front button under the screen (GPIO11), is the setup/reset button and
 # the one musecorder taps for its menu. Active-low with an external pull-up.

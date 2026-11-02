@@ -684,3 +684,94 @@ static bool led_hw_init(void) {
         "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    s_oled_image = false;\n    oled_status_screen();\n",
         "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    s_oled_image = false;\n    oled_status_screen();\n#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    /* musecorder redraws its portrait idle itself */\n", 1)
     ls.write_text(t); print("  patched led_status.c (StickS3 ST7789 backend)")
+
+# --- StickS3: push-to-talk voice chat (HOMEHUB_VOICE). A voice_board using the
+#     on-board ES8311 codec (mic capture at 16 kHz); musecorder forwards a held blue
+#     button into the voice engine, and the reply comes back as text in the Muse app.
+shutil.copy(here / "voice_board_sticks3.c", root / "main" / "voice_board_sticks3.c")
+print("  copied main/voice_board_sticks3.c")
+
+cm = root / "main" / "CMakeLists.txt"; t = cm.read_text()
+if '"voice_board_sticks3.c"' not in t:
+    needle = ('    if(CONFIG_HOMEHUB_LED_BACKEND_RESPEAKER_LITE)\n'
+              '        list(APPEND GADGET_SRCS "voice_board_respeaker_lite.c")\n'
+              '    else()')
+    if needle not in t: sys.exit("apply.py: voice board selection anchor not found in CMakeLists.txt")
+    t = t.replace(needle,
+        '    if(CONFIG_HOMEHUB_LED_BACKEND_RESPEAKER_LITE)\n'
+        '        list(APPEND GADGET_SRCS "voice_board_respeaker_lite.c")\n'
+        '    elseif(CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789)\n'
+        '        list(APPEND GADGET_SRCS "voice_board_sticks3.c")\n'
+        '    else()', 1)
+    cm.write_text(t); print("  patched main/CMakeLists.txt (voice_board_sticks3.c)")
+cm_t = cm.read_text()
+if "    esp_codec_dev\n" not in cm_t:
+    cm_t = cm_t.replace("    esp_driver_i2s\n    esp_driver_pcnt\n",
+                        "    esp_driver_i2s\n    esp_driver_pcnt\n    esp_codec_dev\n", 1)
+    cm.write_text(cm_t); print("  patched main/CMakeLists.txt (esp_codec_dev require)")
+
+# The muse component only pulls esp_codec_dev in for Muse-board builds; declare it for
+# main so the ES8311 voice board can use it on the Link-stack stick too.
+y = root / "main" / "idf_component.yml"; t = y.read_text()
+if "esp_codec_dev" not in t:
+    t = t.replace('  espressif/esp_lcd_st7796: "^1"\n',
+                  '  espressif/esp_lcd_st7796: "^1"\n  espressif/esp_codec_dev: "~1.5"\n', 1)
+    y.write_text(t); print("  patched main/idf_component.yml (esp_codec_dev dependency)")
+
+kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
+if "HOMEHUB_LED_BACKEND_RESPEAKER_LITE || HOMEHUB_LED_BACKEND_STICKS3_ST7789) && SPIRAM" not in t:
+    old = "        depends on (HOMEHUB_LED_BACKEND_VOICE_RING || HOMEHUB_LED_BACKEND_RESPEAKER_LITE) && SPIRAM\n"
+    if old not in t: sys.exit("apply.py: HOMEHUB_VOICE depends anchor not found")
+    t = t.replace(old,
+        "        depends on (HOMEHUB_LED_BACKEND_VOICE_RING || HOMEHUB_LED_BACKEND_RESPEAKER_LITE || HOMEHUB_LED_BACKEND_STICKS3_ST7789) && SPIRAM\n", 1)
+    kc.write_text(t); print("  patched main/Kconfig.projbuild (HOMEHUB_VOICE depends: STICKS3)")
+
+# The voice LED-ring animation (ring_comet/ring_volume/voice_render) is gated by
+# CONFIG_HOMEHUB_VOICE but assumes an addressable ring; the stick has none (it shows
+# voice state on its LCD). Define a 1-"LED" ring and a no-op ring_show so that code
+# compiles harmlessly before the helpers that use them.
+ls = root / "main" / "led_status.c"; t = ls.read_text()
+if "no LED ring on the stick" not in t:
+    anchor = "static rgb_t scaled(rgb_t c, float level) {\n"
+    if anchor not in t: sys.exit("apply.py: led_status.c scaled() anchor not found")
+    t = t.replace(anchor,
+        "#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n"
+        "#ifndef RING_LEDS\n"
+        "#define RING_LEDS 1   // no LED ring on the stick; the voice UI draws on the LCD\n"
+        "#endif\n"
+        "static void ring_show(const rgb_t *px) { (void)px; }\n"
+        "#endif\n" + anchor, 1)
+    ls.write_text(t); print("  patched led_status.c (ring stubs for StickS3 voice)")
+
+vc = root / "main" / "voice.c"; t = vc.read_text()
+if "voice_ptt" not in t:
+    old_btn = "    button_set_press_cb(on_press);\n"
+    if old_btn not in t: sys.exit("apply.py: voice.c button_set_press_cb anchor not found")
+    t = t.replace(old_btn,
+        "#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n"
+        "    (void)on_press;   // the StickS3 drives voice_ptt() from musecorder's blue button\n"
+        "#else\n"
+        "    button_set_press_cb(on_press);\n"
+        "#endif\n", 1)
+    anchor = "static void voice_task(void *arg) {\n"
+    if anchor not in t: sys.exit("apply.py: voice.c voice_task anchor not found")
+    t = t.replace(anchor,
+        "// Push-to-talk entry for boards that own the button elsewhere (the StickS3\n"
+        "// forwards a held blue button here). Feeds the same queue as on_press.\n"
+        "void voice_ptt(bool pressed) {\n"
+        "    if (!atomic_load(&s_ready)) return;\n"
+        "    voice_evt_t evt = pressed ? EVT_PRESS : EVT_RELEASE;\n"
+        "    xQueueSend(s_events, &evt, 0);\n"
+        "}\n\n" + anchor, 1)
+    vc.write_text(t); print("  patched main/voice.c (voice_ptt + stick button handoff)")
+
+vh = root / "main" / "voice.h"; t = vh.read_text()
+if "voice_ptt" not in t:
+    old = "void voice_init(void);\n"
+    if old not in t: sys.exit("apply.py: voice.h voice_init anchor not found")
+    t = t.replace(old,
+        "void voice_init(void);\n\n"
+        "// Push-to-talk from a board that owns the button itself (StickS3): pressed=true\n"
+        "// starts a turn, false ends it. No-op until voice_init() has run.\n"
+        "void voice_ptt(bool pressed);\n", 1)
+    vh.write_text(t); print("  patched main/voice.h (voice_ptt prototype)")

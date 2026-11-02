@@ -30,6 +30,13 @@ void sticks3_lcd_brightness(int pct);
 // display bring-up leaves it off; enable it before driving IR. False if the PMIC
 // isn't up yet.
 bool sticks3_pmic_5v(bool on);
+
+// The internal I2C master bus handle (PMIC/IMU/ES8311 live on it), as a void* so
+// callers needn't include driver/i2c_master.h. NULL before sticks3_lcd_init().
+void *sticks3_i2c_bus(void);
+
+// Speaker amplifier (AW8737) enable, via the PMIC PYG3 pin. Off at boot.
+void sticks3_spk_amp(bool on);
 // Read the battery from the M5PM1 PMIC. On success *millivolt is the battery
 // voltage in mV and *usb is true when USB / the 5 V input is present (the PM1 has
 // no real charge-status register, so USB-present is the charging proxy). Either

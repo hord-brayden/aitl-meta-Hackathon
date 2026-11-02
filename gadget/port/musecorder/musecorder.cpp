@@ -47,6 +47,9 @@ extern "C" {
 #include "image_fetch.h"
 void app_touch_short_press(void);   // app.c: the BOOT tap (confirms pairing) and the 5 s hold (erases setup), from the touchscreen
 void app_touch_long_press(void);
+#if CONFIG_HOMEHUB_VOICE
+void voice_ptt(bool pressed);       // voice.c: push-to-talk (we drive it from a held blue button)
+#endif
 }
 #include "esp_system.h"
 #include "esp_sleep.h"
@@ -1512,9 +1515,15 @@ static void joyTick() {
 #if MC_BTN_NAV
 // ---------------------------------------------------------------- button navigation (M5StickS3: blue=select, side=down)
 #define MC_BTN_DOWN_GPIO 12                 // KEY2, the right side button
-static volatile bool s_btn_select = false;  // the blue button (GPIO11), queued from pressCb
+static volatile bool s_blue_down = false;   // blue (GPIO11) physically held, set by pressCb
+static volatile int64_t s_blue_since = 0;   // when the current blue press began (us)
+static volatile bool s_blue_tap = false;    // a completed short tap, awaiting its action
 static bool s_down_prev = false, s_down_long = false;
 static int64_t s_down_since = 0;
+#if CONFIG_HOMEHUB_VOICE
+static bool s_talking = false;              // push-to-talk active: blue held past the threshold
+#define MC_PTT_HOLD_US 350000               // hold blue ~0.35 s to start talking to Muse
+#endif
 static void btnNavInit() {
     gpio_reset_pin((gpio_num_t)MC_BTN_DOWN_GPIO);
     gpio_set_direction((gpio_num_t)MC_BTN_DOWN_GPIO, GPIO_MODE_INPUT);
@@ -1523,8 +1532,20 @@ static void btnNavInit() {
 }
 static void btnNavTick() {
     int64_t now = esp_timer_get_time();
-    if (s_btn_select) {                      // blue button, handed over by pressCb
-        s_btn_select = false;
+#if CONFIG_HOMEHUB_VOICE
+    if (s_blue_down && !s_talking && now - s_blue_since > MC_PTT_HOLD_US) {   // blue held: start talking
+        s_talking = true; s_blue_tap = false;
+        clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 8, "listening", 3, C_BIG);
+        voice_ptt(true);
+    } else if (s_talking && !s_blue_down) {                                   // blue released: send the clip
+        s_talking = false; voice_ptt(false);
+        clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 8, "sent", 3, C_MUTED);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        if (s_launcher) launcherDraw(); else if (s_running) s_dirty_screen = true; else showIdle();
+    }
+#endif
+    if (s_blue_tap) {                        // a completed short blue tap (not a hold)
+        s_blue_tap = false;
         if (s_launcher) navSelect();
         else if (!s_running) { if (link_pairing_confirmation_required()) app_touch_short_press(); else { s_sel = 0; launcherOpen(); } }
         else s_tap_pending = true;           // applet running: boot:press
@@ -1687,12 +1708,19 @@ extern "C" void musecorder_vm_connected(void) { s_vm_up = true; s_vm_gen = s_vm_
 extern "C" void musecorder_session_starved(void) { s_starved = true; }
 extern "C" void musecorder_screen_reset(void) { s_cleared = false; s_dirty_screen = true; if (s_launcher) s_launcher = false; }
 static bool pressCb(bool pressed) {
-    if (!pressed) return false;
 #if MC_BTN_NAV
-    if (s_running && !s_launcher) { s_tap_pending = true; return false; }   // applet: boot:press; link keeps its hold-to-reset
-    s_btn_select = true;   // menu select / open / confirm pairing -- acted on under s_lock in the tick task
-    return true;           // claim the blue press so the link layer does not also retry Wi-Fi
+    // Blue button: record the edges; btnNavTick decides tap vs hold from the timing.
+    // A quick tap selects/confirms; a hold (> MC_PTT_HOLD_US) is push-to-talk.
+    if (pressed) { s_blue_down = true; s_blue_since = esp_timer_get_time(); return true; }
+    s_blue_down = false;
+#if CONFIG_HOMEHUB_VOICE
+    if (!s_talking) s_blue_tap = true;   // released without talking -> it was a tap
 #else
+    s_blue_tap = true;                   // no voice build: every release is a tap
+#endif
+    return true;                         // claim the blue press so the link layer does not also retry Wi-Fi
+#else
+    if (!pressed) return false;
     if (s_running) s_tap_pending = true;   // instant boot:press for the applet
     return false;   // not claimed: a 5 s hold still resets setup (re-pair, new Wi-Fi) while an applet runs
 #endif

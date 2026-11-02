@@ -226,6 +226,14 @@ bool sticks3_pmic_5v(bool on) {
     return pmic_update(PMIC_PWR_CFG, PMIC_PWR_5V, on) == ESP_OK;
 }
 
+// The internal I2C bus (PMIC, IMU, ES8311) so other modules can add their own
+// device without re-creating it. Returned as void* to keep i2c_master.h private.
+void *sticks3_i2c_bus(void) { return (void *)s_bus; }
+
+// Speaker amplifier (AW8737) enable, via the PMIC's PYG3 pin. Off at boot (it
+// would interfere with the IR receiver); the voice board turns it on to play.
+void sticks3_spk_amp(bool on) { if (s_pmic) pmic_update(PMIC_GPIO_OUT, PMIC_SPK, on); }
+
 bool sticks3_battery(uint16_t *millivolt, bool *usb) {
     if (!s_pmic) return false;   // PMIC not up yet
     uint8_t v[2];
