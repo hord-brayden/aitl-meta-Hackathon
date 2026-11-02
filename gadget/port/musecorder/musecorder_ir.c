@@ -2,7 +2,11 @@
 #include "musecorder_ir.h"
 #include <string.h>
 #include "driver/rmt_tx.h"
+#include "driver/rmt_rx.h"
 #include "driver/rmt_encoder.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 
 static const char *TAG = "mc_ir";
@@ -87,4 +91,58 @@ bool musecorder_ir_raw(const uint16_t *durations_us, size_t count) {
     bool ok = send(syms, pairs);
     free(syms);
     return ok;
+}
+
+// ---------------------------------------------------------------- receive / learn
+#define IR_RX_SYMBOLS 96            // one burst; NEC is ~34, most remotes fit in 96
+
+static rmt_channel_handle_t s_rx_chan;
+static QueueHandle_t s_rx_queue;
+static bool s_rx_ready;
+
+static bool IRAM_ATTR rx_done_cb(rmt_channel_handle_t ch, const rmt_rx_done_event_data_t *edata, void *user) {
+    BaseType_t hp = pdFALSE;
+    xQueueSendFromISR((QueueHandle_t)user, edata, &hp);   // copy the event (ptr + count) to the waiter
+    return hp == pdTRUE;
+}
+
+bool musecorder_ir_rx_init(int gpio) {
+    if (s_rx_ready) return true;
+    rmt_rx_channel_config_t cfg = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = IR_RESOLUTION_HZ,   // 1 tick = 1 us
+        .mem_block_symbols = IR_RX_SYMBOLS,
+        .gpio_num = gpio,
+    };
+    if (rmt_new_rx_channel(&cfg, &s_rx_chan) != ESP_OK) { ESP_LOGW(TAG, "rx channel"); return false; }
+    s_rx_queue = xQueueCreate(2, sizeof(rmt_rx_done_event_data_t));
+    if (!s_rx_queue) { ESP_LOGW(TAG, "rx queue"); return false; }
+    rmt_rx_event_callbacks_t cbs = { .on_recv_done = rx_done_cb };
+    if (rmt_rx_register_event_callbacks(s_rx_chan, &cbs, s_rx_queue) != ESP_OK) { ESP_LOGW(TAG, "rx cb"); return false; }
+    if (rmt_enable(s_rx_chan) != ESP_OK) { ESP_LOGW(TAG, "rx enable"); return false; }
+    s_rx_ready = true;
+    ESP_LOGI(TAG, "IR RX up on GPIO%d", gpio);
+    return true;
+}
+
+bool musecorder_ir_rx_ready(void) { return s_rx_ready; }
+
+bool musecorder_ir_capture(uint16_t *out, size_t cap, size_t *count, int timeout_ms) {
+    if (!s_rx_ready || !out || !count || cap < 4) return false;
+    static rmt_symbol_word_t raw[IR_RX_SYMBOLS];
+    rmt_receive_config_t rcfg = {
+        .signal_range_min_ns = 1000,          // ignore pulses < 1 us (noise)
+        .signal_range_max_ns = 12000000,      // a gap > 12 ms ends the burst
+    };
+    if (rmt_receive(s_rx_chan, raw, sizeof(raw), &rcfg) != ESP_OK) return false;
+    rmt_rx_done_event_data_t ev;
+    if (xQueueReceive(s_rx_queue, &ev, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) return false;
+    size_t n = 0;
+    for (size_t i = 0; i < ev.num_symbols && n + 1 < cap; i++) {
+        out[n++] = ev.received_symbols[i].duration0;      // mark
+        if (ev.received_symbols[i].duration1 == 0) break; // last symbol has a 0 tail
+        out[n++] = ev.received_symbols[i].duration1;       // space
+    }
+    *count = n;
+    return n >= 4;   // a real remote press is at least a leader + one bit
 }

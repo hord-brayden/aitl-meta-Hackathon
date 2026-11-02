@@ -35,6 +35,21 @@ bool musecorder_ir_nec(uint8_t address, uint8_t command);
 // until done. Useful for protocols other than NEC, captured elsewhere.
 bool musecorder_ir_raw(const uint16_t *durations_us, size_t count);
 
+// Bring up the RMT RX channel on the given GPIO (a demodulating IR receiver's
+// output, e.g. GPIO42 on the StickS3). Safe to call more than once. Returns false
+// on failure. This is how the device LEARNS: capture a real remote's burst, then
+// replay it with musecorder_ir_raw().
+bool musecorder_ir_rx_init(int gpio);
+
+// True once musecorder_ir_rx_init() has succeeded.
+bool musecorder_ir_rx_ready(void);
+
+// Capture one IR burst. Blocks up to timeout_ms for a signal, then until the burst
+// ends (a long idle gap). On success fills out[] with the durations in microseconds
+// (mark, space, mark, ... starting with a mark), sets *count, and returns true.
+// `cap` is out[]'s capacity. Returns false on timeout, error, or a too-short burst.
+bool musecorder_ir_capture(uint16_t *out, size_t cap, size_t *count, int timeout_ms);
+
 #ifdef __cplusplus
 }
 #endif
