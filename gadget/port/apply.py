@@ -779,7 +779,8 @@ static bool led_hw_init(void) {
 #     on-board ES8311 codec (mic capture at 16 kHz); musecorder forwards a held blue
 #     button into the voice engine, and the reply comes back as text in the Muse app.
 shutil.copy(here / "voice_board_sticks3.c", root / "main" / "voice_board_sticks3.c")
-print("  copied main/voice_board_sticks3.c")
+shutil.copy(here / "voice_board_cyd28.c", root / "main" / "voice_board_cyd28.c")
+print("  copied main/voice_board_sticks3.c, main/voice_board_cyd28.c")
 
 cm = root / "main" / "CMakeLists.txt"; t = cm.read_text()
 if '"voice_board_sticks3.c"' not in t:
@@ -794,6 +795,15 @@ if '"voice_board_sticks3.c"' not in t:
         '        list(APPEND GADGET_SRCS "voice_board_sticks3.c")\n'
         '    else()', 1)
     cm.write_text(t); print("  patched main/CMakeLists.txt (voice_board_sticks3.c)")
+cm = root / "main" / "CMakeLists.txt"; t = cm.read_text()
+if '"voice_board_cyd28.c"' not in t:
+    needle = ('    elseif(CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789)\n'
+              '        list(APPEND GADGET_SRCS "voice_board_sticks3.c")\n')
+    if needle not in t: sys.exit("apply.py: sticks3 voice elseif anchor not found")
+    t = t.replace(needle, needle +
+        '    elseif(CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341)\n'
+        '        list(APPEND GADGET_SRCS "voice_board_cyd28.c")\n', 1)
+    cm.write_text(t); print("  patched main/CMakeLists.txt (voice_board_cyd28.c)")
 cm_t = cm.read_text()
 if "    esp_codec_dev\n" not in cm_t:
     cm_t = cm_t.replace("    esp_driver_i2s\n    esp_driver_pcnt\n",
@@ -809,12 +819,19 @@ if "esp_codec_dev" not in t:
     y.write_text(t); print("  patched main/idf_component.yml (esp_codec_dev dependency)")
 
 kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
-if "HOMEHUB_LED_BACKEND_RESPEAKER_LITE || HOMEHUB_LED_BACKEND_STICKS3_ST7789) && SPIRAM" not in t:
-    old = "        depends on (HOMEHUB_LED_BACKEND_VOICE_RING || HOMEHUB_LED_BACKEND_RESPEAKER_LITE) && SPIRAM\n"
-    if old not in t: sys.exit("apply.py: HOMEHUB_VOICE depends anchor not found")
-    t = t.replace(old,
+# Guard on the ORIGINAL anchor's presence (not the result), so this stays idempotent even
+# after the CYD28 block below extends the same line (otherwise the result check re-fires).
+_vdep_old = "        depends on (HOMEHUB_LED_BACKEND_VOICE_RING || HOMEHUB_LED_BACKEND_RESPEAKER_LITE) && SPIRAM\n"
+if _vdep_old in t:
+    t = t.replace(_vdep_old,
         "        depends on (HOMEHUB_LED_BACKEND_VOICE_RING || HOMEHUB_LED_BACKEND_RESPEAKER_LITE || HOMEHUB_LED_BACKEND_STICKS3_ST7789) && SPIRAM\n", 1)
     kc.write_text(t); print("  patched main/Kconfig.projbuild (HOMEHUB_VOICE depends: STICKS3)")
+kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
+if "STICKS3_ST7789 || HOMEHUB_LED_BACKEND_CYD28_ILI9341) && SPIRAM" not in t:
+    old = "HOMEHUB_LED_BACKEND_STICKS3_ST7789) && SPIRAM\n"
+    if old in t:
+        t = t.replace(old, "HOMEHUB_LED_BACKEND_STICKS3_ST7789 || HOMEHUB_LED_BACKEND_CYD28_ILI9341) && SPIRAM\n", 1)
+        kc.write_text(t); print("  patched main/Kconfig.projbuild (HOMEHUB_VOICE depends: CYD28)")
 
 # The voice LED-ring animation (ring_comet/ring_volume/voice_render) is gated by
 # CONFIG_HOMEHUB_VOICE but assumes an addressable ring; the stick has none (it shows
@@ -825,9 +842,9 @@ if "no LED ring on the stick" not in t:
     anchor = "static rgb_t scaled(rgb_t c, float level) {\n"
     if anchor not in t: sys.exit("apply.py: led_status.c scaled() anchor not found")
     t = t.replace(anchor,
-        "#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n"
+        "#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789 || CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341\n"
         "#ifndef RING_LEDS\n"
-        "#define RING_LEDS 1   // no LED ring on the stick; the voice UI draws on the LCD\n"
+        "#define RING_LEDS 1   // no LED ring on the stick/CYD28; the voice UI draws on the LCD\n"
         "#endif\n"
         "static void ring_show(const rgb_t *px) { (void)px; }\n"
         "#endif\n" + anchor, 1)
@@ -838,8 +855,8 @@ if "voice_ptt" not in t:
     old_btn = "    button_set_press_cb(on_press);\n"
     if old_btn not in t: sys.exit("apply.py: voice.c button_set_press_cb anchor not found")
     t = t.replace(old_btn,
-        "#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n"
-        "    (void)on_press;   // the StickS3 drives voice_ptt() from musecorder's blue button\n"
+        "#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789 || CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341\n"
+        "    (void)on_press;   // the StickS3/CYD28 drive voice_ptt() from musecorder (no spare button)\n"
         "#else\n"
         "    button_set_press_cb(on_press);\n"
         "#endif\n", 1)

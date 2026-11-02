@@ -53,6 +53,9 @@ void app_touch_short_press(void);   // app.c: the BOOT tap (confirms pairing) an
 void app_touch_long_press(void);
 #if CONFIG_HOMEHUB_VOICE
 void voice_ptt(bool pressed);       // voice.c: push-to-talk (we drive it from a held blue button)
+#if CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+int voice_board_cyd28_peak(void);   // TEMP: last recording's mic level, for the on-screen "sent (mic N)" readout
+#endif
 #endif
 }
 #include "esp_system.h"
@@ -486,6 +489,10 @@ static void startClockSync() {   // real wall-clock time over Wi-Fi (NTP); the l
     else logf("clock sync init failed");
 }
 #endif
+#if CONFIG_HOMEHUB_VOICE
+static int s_ptt_x = -1, s_ptt_y = 0, s_ptt_w = 0, s_ptt_h = 0;   // on-screen "Hold to Talk" button (set by drawIdle)
+static bool s_ptt_talking = false;                                // push-to-talk active (finger held on the button)
+#endif
 static void drawIdle() {   // musecorder's own idle screen; used in portrait, where Meta's animation only draws landscape
     s_launcher = false; s_hits.clear(); s_cleared = false; fillRect(0, 0, s_screen_w, s_screen_h, C_BG);
     std::string status = s_vm_up ? "Muse linked" : "connecting";
@@ -508,6 +515,16 @@ static void drawIdle() {   // musecorder's own idle screen; used in portrait, wh
         drawText(y, "hold side = menu", hint, C_MUTED);       y += 8 * hint + 12;
         s_batt_x = 0; s_batt_w = s_screen_w; s_batt_y = y; drawBattery(y);
     }
+#elif CONFIG_HOMEHUB_VOICE
+    // Landscape touch board with voice (CYD28): title, status, an on-screen Hold-to-Talk
+    // button, then battery. Tap the title band for the menu; hold the button to talk.
+    int big = fitScale("MUSECORDER", 3), st = fitScale(status, 2), hint = fitScale("hold to talk  -  tap title for menu", 1);
+    int y = TOP_CLEAR + 12;
+    drawText(y, "MUSECORDER", big, C_BIG);            y += 8 * big + 10;
+    drawText(y, status, st, s_vm_up ? C_BIG : C_MUTED); y += 8 * st + 12;
+    { int bw = s_screen_w - 48, bx = 24; fillRect(bx, y, bw, BTN_H, C_BTN); drawTextIn(bx + 2, y + (BTN_H - 8 * 2) / 2, bw - 4, "Hold to Talk", 2, C_TEXT, C_BTN); s_ptt_x = bx; s_ptt_y = y; s_ptt_w = bw; s_ptt_h = BTN_H; y += BTN_H + 10; }
+    drawText(y, "hold to talk  -  tap title for menu", hint, C_MUTED); y += 8 * hint + 10;
+    s_batt_y = y; drawBattery(y);
 #else
     int big = fitScale("MUSECORDER", 3), st = fitScale(status, 2), hint = fitScale("tap for menu", 2);
     int y = s_screen_h / 2 - 8 * big - 12;
@@ -518,7 +535,11 @@ static void drawIdle() {   // musecorder's own idle screen; used in portrait, wh
 #endif
     s_idle_shown = true;
 }
+#if CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+static void showIdle() { drawIdle(); }   // CYD28: always-on; draw our own idle (led_status_show_animation doesn't render on this backend, so the screen was blank until a touch)
+#else
 static void showIdle() { if (s_rot || s_screen_h > s_screen_w) drawIdle(); else led_status_show_animation(); }   // drawIdle for any portrait panel (native, like the StickS3, or rotated); Meta's animation only draws landscape
+#endif
 static void drawBar(int y, double frac, int h) {
     int x0 = 16, w = s_screen_w - 32, fill = (int)(w * (frac < 0 ? 0 : frac > 1 ? 1 : frac));
     fillRect(0, y, s_screen_w, h, C_BG); fillRect(x0, y, w, h, C_BAR_BG); if (fill > 0) fillRect(x0, y, fill, h, C_BAR);
@@ -646,8 +667,8 @@ static bool touchInit() {
     // every touch register read back 0x00 even under a steady press -- likely contention
     // with the chip's own line if the pinout is wrong. Rely on the board's power-on reset.
     vTaskDelay(pdMS_TO_TICKS(50));
-    i2c_master_bus_config_t bc = {}; bc.i2c_port = I2C_NUM_0; bc.sda_io_num = GPIO_NUM_16; bc.scl_io_num = GPIO_NUM_15; bc.clk_source = I2C_CLK_SRC_DEFAULT; bc.glitch_ignore_cnt = 7; bc.flags.enable_internal_pullup = true;
-    if (i2c_new_master_bus(&bc, &s_tbus) != ESP_OK) return false;
+    s_tbus = (i2c_master_bus_handle_t)cyd28_i2c_bus();   // shared bus (the ES8311 codec is on it too); IO15 SCL / IO16 SDA
+    if (!s_tbus) return false;
     i2c_device_config_t dc = {}; dc.dev_addr_length = I2C_ADDR_BIT_LEN_7; dc.device_address = 0x38; dc.scl_speed_hz = 100000;   // 100 kHz: tolerant of weak pull-ups (400 kHz gave intermittent all-zero reads)
     if (i2c_master_bus_add_device(s_tbus, &dc, &s_tdev) != ESP_OK) return false;
     uint8_t reg = 0xA3, id = 0;   // chip id (FT6336G ~ 0x64); log it, don't fail on the value
@@ -1411,7 +1432,7 @@ static void settingsDraw() {
     s_menu = 1;
     char b[40]; std::vector<std::pair<std::string, std::string>> items;
     snprintf(b, sizeof b, "Brightness %d%%", s_bright); items.push_back({b, "bright"});
-    snprintf(b, sizeof b, "Screen off: %s", s_off_min == 0 ? "never" : s_off_min == 2 ? "2 min" : s_off_min == 10 ? "10 min" : "30 min"); items.push_back({b, "off"});
+    snprintf(b, sizeof b, "Off: %s", s_off_min == 0 ? "never" : s_off_min == 2 ? "2m" : s_off_min == 10 ? "10m" : "30m"); items.push_back({b, "off"});
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
     items.push_back({s_rot ? "Go portrait" : "Go landscape", "orient"});   // portrait(0) <-> landscape(1)
     if (s_rot) items.push_back({"Flip 180", "flipland"});                   // in landscape: pick which way is up (1 <-> 2)
@@ -1687,6 +1708,9 @@ static void btnNavTick() {
 // ---------------------------------------------------------------- touch dispatch
 static bool s_down = false, s_wiz_wait_up = false, s_held = false; static int s_dx = 0, s_dy = 0, s_ox = 0, s_oy = 0, s_down_n = 0, s_up_n = 0;
 static void onTap(int x, int y) {
+#if CONFIG_HOMEHUB_VOICE
+    if (!s_launcher && !s_running && s_ptt_x >= 0 && x >= s_ptt_x && x < s_ptt_x + s_ptt_w && y >= s_ptt_y && y < s_ptt_y + s_ptt_h) return;   // quick tap on the Talk button (not a hold): ignore
+#endif
     if (s_launcher) { for (auto &h : s_hits) if (x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h) { launcherTap(h.ev); return; } return; }
     if (!s_running) { if (link_pairing_confirmation_required()) { ESP_LOGI(TAG, "touch confirms pairing"); app_touch_short_press(); } else launcherOpen(); return; }
     for (auto &h : s_hits) if (x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h) { if (!h.ev.empty()) fire(h.ev.c_str()); return; }
@@ -1711,6 +1735,15 @@ static void touchTick() {
         s_dx = x; s_dy = y;
         bool moved = abs(x - s_ox) > 15 || abs(y - s_oy) > 15;   // a drag (sketching) is not a hold
         if (moved) s_held = true;   // and stays no-hold until the finger lifts
+#if CONFIG_HOMEHUB_VOICE
+        if (!s_launcher && !s_running && !s_ptt_talking && s_ptt_x >= 0
+            && s_ox >= s_ptt_x && s_ox < s_ptt_x + s_ptt_w && s_oy >= s_ptt_y && s_oy < s_ptt_y + s_ptt_h
+            && s_down_n >= 350 / MC_TICK_MS) {   // held ~0.35 s on the Talk button: start recording
+            s_ptt_talking = true; s_held = true;   // s_held blocks the launcher-open path below
+            clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 12, "listening", 3, C_BIG);
+            ESP_LOGW(TAG, "voice: ptt start"); voice_ptt(true);
+        }
+#endif
         if (!s_held && s_down_n >= 1000 / MC_TICK_MS && !s_launcher) {   // held still for a second: the launcher, from any screen
             s_held = true; bool onButton = false;
             for (auto &h : s_hits) if (x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h) onButton = true;
@@ -1720,6 +1753,21 @@ static void touchTick() {
     } else if (s_down) {
         if (++s_up_n < 3) return;   // resistive contact flickers: the pen is up only after 3 quiet ticks (150 ms)
         s_down = false;
+#if CONFIG_HOMEHUB_VOICE
+        if (s_ptt_talking) {   // Talk button released: send the clip to Muse
+            s_ptt_talking = false; s_held = false;
+            ESP_LOGW(TAG, "voice: ptt stop"); voice_ptt(false);
+            char sb[24];
+#if CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+            snprintf(sb, sizeof sb, "sent (mic %d)", voice_board_cyd28_peak());   // TEMP: 0 = dead mic, small = low gain
+#else
+            snprintf(sb, sizeof sb, "sent");
+#endif
+            clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 12, sb, 2, C_MUTED);
+            vTaskDelay(pdMS_TO_TICKS(900)); showIdle();
+            return;
+        }
+#endif
         bool dragged = abs(s_dx - s_ox) > 15 || abs(s_dy - s_oy) > 15;
         if (s_held) { s_held = false; if (!dragged) return; }   // a finished hold is not a tap; a finished drag still reports touch
         if (s_down_n + 1 >= MC_TAP_SAMPLES) onTap(s_dx, s_dy);
@@ -1784,7 +1832,11 @@ static void tickTask(void *) {
                 if (s_dirty_state && now - s_last_save > 2000000) saveState();
             }
         } else s_tap_pending = false;
-        if ((s_rot || s_screen_h > s_screen_w) && !s_running && !s_launcher && s_wiz < 0) {
+        bool own_idle = s_rot || s_screen_h > s_screen_w;
+#if CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+        own_idle = true;   // CYD28 is landscape but draws its OWN idle (with the Talk button), not Meta's led_status animation
+#endif
+        if (own_idle && !s_running && !s_launcher && s_wiz < 0) {
             if (!s_idle_shown) drawIdle();
             else {
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789

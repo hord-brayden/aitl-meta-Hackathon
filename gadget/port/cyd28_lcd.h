@@ -30,6 +30,12 @@ bool cyd28_lcd_draw(int x, int y, int w, int h, const uint16_t *px);
 // Backlight level, 0..100 (LEDC PWM on the backlight pin).
 void cyd28_lcd_brightness(int pct);
 
+// The shared I2C bus on IO15 (SCL) / IO16 (SDA): the FT6336 touch controller AND the
+// ES8311 audio codec both live here, so they must share one master bus. Lazily created
+// on the first call (order-independent); returns an i2c_master_bus_handle_t as void*,
+// or NULL on failure. Touch (musecorder) and the voice board both get the bus from here.
+void *cyd28_i2c_bus(void);
+
 int cyd28_lcd_width(void);
 int cyd28_lcd_height(void);
 

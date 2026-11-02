@@ -9,6 +9,7 @@
 #include "cyd28_lcd.h"
 #include <string.h>
 #include "driver/ledc.h"
+#include "driver/i2c_master.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_io.h"
@@ -156,3 +157,22 @@ void cyd28_lcd_brightness(int pct) {
 
 int cyd28_lcd_width(void) { return CYD28_LCD_W; }
 int cyd28_lcd_height(void) { return CYD28_LCD_H; }
+
+// Shared I2C bus on IO15 (SCL) / IO16 (SDA): FT6336 touch (0x38) + ES8311 codec (0x18).
+// Lazily created so it does not matter whether touch or the voice board asks first.
+#define CYD28_I2C_SCL 15
+#define CYD28_I2C_SDA 16
+static i2c_master_bus_handle_t s_i2c_bus;
+void *cyd28_i2c_bus(void) {
+    if (s_i2c_bus) return (void *)s_i2c_bus;
+    const i2c_master_bus_config_t bc = {
+        .i2c_port = I2C_NUM_0,
+        .sda_io_num = CYD28_I2C_SDA,
+        .scl_io_num = CYD28_I2C_SCL,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags = { .enable_internal_pullup = true },
+    };
+    if (i2c_new_master_bus(&bc, &s_i2c_bus) != ESP_OK) { ESP_LOGW(TAG, "shared I2C bus create failed"); s_i2c_bus = NULL; }
+    return (void *)s_i2c_bus;
+}

@@ -11,6 +11,9 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341=y
 # Applet runtime: Muse installs applets over the control session; FT6336 touch drives the launcher.
 CONFIG_HOMEHUB_MUSECORDER=y
+# Push-to-talk voice through the on-board ES8311 codec (mic -> Muse chat as a voice note).
+# The talk trigger is driven from musecorder (on-screen button); no spare physical button.
+CONFIG_HOMEHUB_VOICE=y
 CONFIG_HOMEHUB_BLE_NAME_PREFIX="MuseGadget-CYD28"
 # BOOT key (GPIO0): confirms pairing / re-pair from the button (also touch stand-ins on screen).
 CONFIG_HOMEHUB_BUTTON_GPIO=0
