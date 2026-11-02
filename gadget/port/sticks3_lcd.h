@@ -35,6 +35,17 @@ bool sticks3_pmic_5v(bool on);
 // no real charge-status register, so USB-present is the charging proxy). Either
 // pointer may be NULL. Returns false if the PMIC isn't up yet.
 bool sticks3_battery(uint16_t *millivolt, bool *usb);
+
+// Bring up the BMI270 6-axis IMU (on the internal I2C bus; call after
+// sticks3_lcd_init()). Uploads Bosch's config file once, then enables accel +
+// gyro. Safe to call repeatedly (later calls are no-ops). Returns false if the
+// sensor doesn't answer or the config load doesn't confirm.
+bool sticks3_imu_init(void);
+// Read the latest sample. accel[] is raw int16 at +/-8 g (4096 LSB/g); gyro[] is
+// raw int16 at +/-2000 dps (16.384 LSB/dps). Either pointer may be NULL. Returns
+// false if the IMU isn't initialised or the read fails.
+bool sticks3_imu_read(int16_t accel[3], int16_t gyro[3]);
+
 int sticks3_lcd_width(void);
 int sticks3_lcd_height(void);
 

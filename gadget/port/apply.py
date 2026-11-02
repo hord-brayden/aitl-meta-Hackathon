@@ -596,8 +596,9 @@ if "4827S043_RGB" not in t:
 shutil.copy(here / "sdkconfig.sticks3", root / "devices" / "sdkconfig.sticks3")
 shutil.copy(here / "sticks3_lcd.c", root / "main" / "sticks3_lcd.c")
 shutil.copy(here / "sticks3_lcd.h", root / "main" / "sticks3_lcd.h")
+shutil.copy(here / "sticks3_bmi270_config.h", root / "main" / "sticks3_bmi270_config.h")   # Bosch BMI270 init blob (BSD-3), #included by sticks3_lcd.c
 shutil.copy(here / "partitions_sticks3.csv", root / "partitions_sticks3.csv")
-print("  copied devices/sdkconfig.sticks3, main/sticks3_lcd.c, main/sticks3_lcd.h, partitions_sticks3.csv")
+print("  copied devices/sdkconfig.sticks3, main/sticks3_lcd.c, main/sticks3_lcd.h, main/sticks3_bmi270_config.h, partitions_sticks3.csv")
 
 cm = root / "main" / "CMakeLists.txt"; t = cm.read_text()
 if '"sticks3_lcd.c"' not in t:

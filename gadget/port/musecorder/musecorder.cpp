@@ -748,6 +748,26 @@ static void doI2c(const char *op, cJSON *a) {   // i2c.scan{to} i2c.read{addr,re
     i2c_master_bus_rm_device(d);
 }
 
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+// imu.read{to}: sample the BMI270 and publish accel (g), gyro (dps) and tilt angles.
+// Keys land under `to` (default "imu"): <to>.ax/.ay/.az, <to>.gx/.gy/.gz, <to>.pitch, <to>.roll.
+static void doImuRead(cJSON *a) {
+    std::string to = strOf(a, "to"); if (to.empty()) to = "imu";
+    if (!sticks3_imu_init()) { logf("imu: not available"); return; }
+    int16_t ac[3], gy[3];
+    if (!sticks3_imu_read(ac, gy)) { logf("imu: read failed"); return; }
+    double ax = ac[0] / 4096.0, ay = ac[1] / 4096.0, az = ac[2] / 4096.0;   // g, +/-8 g range
+    s_state[to + ".ax"] = Value::N(ax);
+    s_state[to + ".ay"] = Value::N(ay);
+    s_state[to + ".az"] = Value::N(az);
+    s_state[to + ".gx"] = Value::N(gy[0] / 16.384);   // dps, +/-2000 range
+    s_state[to + ".gy"] = Value::N(gy[1] / 16.384);
+    s_state[to + ".gz"] = Value::N(gy[2] / 16.384);
+    s_state[to + ".pitch"] = Value::N(atan2(ax, sqrt(ay * ay + az * az)) * 57.2957795);
+    s_state[to + ".roll"]  = Value::N(atan2(ay, az) * 57.2957795);
+}
+#endif
+
 
 // ---------------------------------------------------------------- microSD (mounted only while an action runs)
 static std::string sdName(const std::string &in) { std::string n; for (char c : in) { if (isalnum((unsigned char)c) || c == '.' || c == '_' || c == '-') n += c; if (n.size() >= 24) break; } return n; }
@@ -1058,6 +1078,9 @@ static void runOne(cJSON *a, int depth) {
     if (cJSON *x = cJSON_GetObjectItem(a, "i2c.scan")) { doI2c("scan", x); s_dirty_screen = true; }
     if (cJSON *x = cJSON_GetObjectItem(a, "i2c.read")) { doI2c("read", x); s_dirty_screen = true; }
     if (cJSON *x = cJSON_GetObjectItem(a, "i2c.write")) doI2c("write", x);
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    if (cJSON *x = cJSON_GetObjectItem(a, "imu.read")) { doImuRead(x); s_dirty_screen = true; }
+#endif
     if (cJSON *x = cJSON_GetObjectItem(a, "ir.nec")) doIrNec(x);
     if (cJSON *x = cJSON_GetObjectItem(a, "ir.raw")) doIrRaw(x);
     if (cJSON *x = cJSON_GetObjectItem(a, "sd.append")) sdAppend(strOf(x, "file"), strOf(x, "text"));

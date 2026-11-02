@@ -44,6 +44,25 @@ static const char *TAG = "sticks3_lcd";
 #define PMIC_SRC_VIN  0x01
 #define PMIC_VBAT_L   0x22         // battery voltage, 2 bytes little-endian, direct mV
 
+// BMI270 6-axis IMU, on the same internal I2C bus as the PMIC.
+#include "sticks3_bmi270_config.h"
+#define IMU_ADDR       0x68
+#define IMU_CHIP_ID    0x00        // expect 0x24
+#define IMU_INT_STATUS 0x21        // low nibble == 0x01 once the config file is loaded
+#define IMU_ACC_DATA   0x0C        // acc_x_lsb; 12 bytes = acc[xyz] then gyr[xyz], LE int16
+#define IMU_ACC_CONF   0x40
+#define IMU_ACC_RANGE  0x41
+#define IMU_GYR_CONF   0x42
+#define IMU_GYR_RANGE  0x43
+#define IMU_INIT_CTRL  0x59
+#define IMU_INIT_ADDR0 0x5B
+#define IMU_INIT_ADDR1 0x5C
+#define IMU_INIT_DATA  0x5E
+#define IMU_PWR_CONF   0x7C
+#define IMU_PWR_CTRL   0x7D
+#define IMU_CMD        0x7E
+#define IMU_CFG_CHUNK  128         // bytes per config-upload burst (word aligned)
+
 static i2c_master_bus_handle_t s_bus;
 static i2c_master_dev_handle_t s_pmic;
 static esp_lcd_panel_handle_t s_panel;
@@ -213,6 +232,81 @@ bool sticks3_battery(uint16_t *millivolt, bool *usb) {
     if (pmic_read(PMIC_VBAT_L, v, 2) != ESP_OK) return false;
     if (millivolt) *millivolt = (uint16_t)((v[1] << 8) | v[0]);   // direct mV
     if (usb) { uint8_t s = 0; *usb = pmic_read(PMIC_PWR_SRC, &s, 1) == ESP_OK && (s & PMIC_SRC_VIN); }
+    return true;
+}
+
+// ---------------------------------------------------------------- BMI270 IMU
+static i2c_master_dev_handle_t s_imu;
+static bool s_imu_ok;
+
+static esp_err_t imu_w(uint8_t reg, uint8_t val) {
+    const uint8_t b[2] = {reg, val};
+    return i2c_master_transmit(s_imu, b, 2, 50);
+}
+static esp_err_t imu_r(uint8_t reg, uint8_t *buf, size_t n) {
+    return i2c_master_transmit_receive(s_imu, &reg, 1, buf, n, 50);
+}
+
+bool sticks3_imu_init(void) {
+    if (s_imu_ok) return true;
+    if (!s_bus) return false;   // the internal I2C bus comes up in sticks3_lcd_init()
+    if (!s_imu) {
+        const i2c_device_config_t dc = {
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .device_address = IMU_ADDR,
+            .scl_speed_hz = 400000,   // the BMI270 is happy at fast mode; keeps the 8 KB upload quick
+        };
+        if (i2c_master_bus_add_device(s_bus, &dc, &s_imu) != ESP_OK) { ESP_LOGW(TAG, "imu add"); return false; }
+    }
+    uint8_t id = 0;
+    imu_w(IMU_CMD, 0xB6);                       // soft reset
+    vTaskDelay(pdMS_TO_TICKS(5));
+    if (imu_r(IMU_CHIP_ID, &id, 1) != ESP_OK) { ESP_LOGW(TAG, "imu not responding at 0x68"); return false; }
+    if (id != 0x24) ESP_LOGW(TAG, "imu chip id 0x%02x (want 0x24); continuing", id);
+
+    // Upload Bosch's config file: the sensor stays in config-load mode until it lands.
+    if (imu_w(IMU_PWR_CONF, 0x00) != ESP_OK) { ESP_LOGW(TAG, "imu pwr_conf"); return false; }
+    vTaskDelay(pdMS_TO_TICKS(1));              // >= 450 us before the load
+    imu_w(IMU_INIT_CTRL, 0x00);               // start config load
+    static uint8_t xfer[1 + IMU_CFG_CHUNK];
+    for (size_t off = 0; off < sizeof(sticks3_bmi270_config_file); off += IMU_CFG_CHUNK) {
+        size_t word = off / 2;                 // INIT_ADDR is in 16-bit words
+        imu_w(IMU_INIT_ADDR0, word & 0x0F);
+        imu_w(IMU_INIT_ADDR1, (word >> 4) & 0xFF);
+        size_t len = sizeof(sticks3_bmi270_config_file) - off;
+        if (len > IMU_CFG_CHUNK) len = IMU_CFG_CHUNK;
+        xfer[0] = IMU_INIT_DATA;
+        memcpy(xfer + 1, sticks3_bmi270_config_file + off, len);
+        if (i2c_master_transmit(s_imu, xfer, 1 + len, 100) != ESP_OK) { ESP_LOGW(TAG, "imu cfg burst @%u", (unsigned)off); return false; }
+    }
+    imu_w(IMU_INIT_CTRL, 0x01);               // config load complete
+
+    bool ok = false;
+    for (int i = 0; i < 20 && !ok; i++) {     // internal status should read 0x01 within ~150 ms
+        vTaskDelay(pdMS_TO_TICKS(10));
+        uint8_t st = 0;
+        if (imu_r(IMU_INT_STATUS, &st, 1) == ESP_OK && (st & 0x0F) == 0x01) ok = true;
+    }
+    if (!ok) { ESP_LOGW(TAG, "imu config load did not confirm"); return false; }
+
+    imu_w(IMU_PWR_CTRL, 0x0E);                 // accel + gyro + temp on
+    imu_w(IMU_ACC_CONF, 0xA8);                 // performance filter, normal avg, 100 Hz
+    imu_w(IMU_ACC_RANGE, 0x02);                // +/- 8 g
+    imu_w(IMU_GYR_CONF, 0xA9);                 // performance filter, normal, 100 Hz
+    imu_w(IMU_GYR_RANGE, 0x00);                // +/- 2000 dps
+    imu_w(IMU_PWR_CONF, 0x02);                 // leave advanced power save off (performance mode)
+    vTaskDelay(pdMS_TO_TICKS(10));
+    s_imu_ok = true;
+    ESP_LOGI(TAG, "BMI270 up (id 0x%02x)", id);
+    return true;
+}
+
+bool sticks3_imu_read(int16_t accel[3], int16_t gyro[3]) {
+    if (!s_imu_ok) return false;
+    uint8_t d[12];
+    if (imu_r(IMU_ACC_DATA, d, sizeof(d)) != ESP_OK) return false;
+    if (accel) for (int i = 0; i < 3; i++) accel[i] = (int16_t)(d[2 * i] | (d[2 * i + 1] << 8));
+    if (gyro)  for (int i = 0; i < 3; i++) gyro[i]  = (int16_t)(d[6 + 2 * i] | (d[6 + 2 * i + 1] << 8));
     return true;
 }
 
