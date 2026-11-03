@@ -83,7 +83,8 @@ class LGFX : public lgfx::LGFX_Device {
       c.vsync_polarity = 0; c.vsync_front_porch = RGB_VSYNC_FP; c.vsync_pulse_width = RGB_VSYNC_PW; c.vsync_back_porch = RGB_VSYNC_BP;
       c.pclk_active_neg = 1; c.de_idle_high = 0; c.pclk_idle_high = 0;
       _bus.config(c); _panel.setBus(&_bus); }
-    { auto c = _light.config(); c.pin_bl = PIN_TFT_BL; c.invert = false; c.freq = 12000; c.pwm_channel = 7; _light.config(c); _panel.setLight(&_light); }
+    // Backlight is a plain GPIO on this board (high = on) — driven directly in displayBegin, NOT via Light_PWM
+    // (LEDC PWM on GPIO2 does not drive this panel's backlight). So no setLight() here; setBrightness() no-ops.
     { auto c = _touch.config();
       c.x_min = 0; c.x_max = TFT_NATIVE_W - 1; c.y_min = 0; c.y_max = TFT_NATIVE_H - 1;
       c.pin_int = -1; c.pin_rst = PIN_TOUCH_RST; c.bus_shared = false; c.offset_rotation = 0;
@@ -341,6 +342,9 @@ void displayPowerTick() {
 void displayApplyPanel() {
   tft.applyPanelFlags(g_settings.invertColors, g_settings.bgrOrder);
   tft.init();
+#if defined(AITL_PANEL_RGB)
+  pinMode(PIN_TFT_BL, OUTPUT); digitalWrite(PIN_TFT_BL, HIGH);   // RGB panel backlight: plain GPIO, high = on
+#endif
   tft.setRotation(g_settings.rotation & 3);
   s_dispDrv.hor_res = displayW(); s_dispDrv.ver_res = displayH();
   lv_disp_drv_update(lv_disp_get_default(), &s_dispDrv);
@@ -351,6 +355,9 @@ void displayApplyPanel() {
 void displayBegin() {
   tft.applyPanelFlags(g_settings.invertColors, g_settings.bgrOrder);
   tft.init();
+#if defined(AITL_PANEL_RGB)
+  pinMode(PIN_TFT_BL, OUTPUT); digitalWrite(PIN_TFT_BL, HIGH);   // RGB panel backlight: plain GPIO, high = on
+#endif
   tft.setRotation(g_settings.rotation & 3);
   tft.setBrightness(0);
   tft.fillScreen(0x0000);
