@@ -1303,6 +1303,13 @@ static void blApply(int percent) {
 #elif CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
     cyd28_lcd_brightness(percent);   // backlight is GPIO45 via cyd28_lcd; MC_PIN_BL (27) is a PSRAM pin on the S3 -> crash/freeze
     return;
+#elif CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB
+    // The 4827's backlight is GPIO2 (driven on by led_status.c at init). MC_PIN_BL (27) is an
+    // octal-PSRAM pin on this S3 board and the RGB framebuffer lives in that PSRAM: configuring
+    // LEDC on GPIO27 here corrupts the framebuffer stream and blanks the panel a moment after
+    // boot. Leave the backlight as led_status.c set it (always on) and never touch GPIO27.
+    (void)percent;
+    return;
 #endif
     if (!s_bl_ready) {
         ledc_timer_config_t tc = {}; tc.speed_mode = LEDC_LOW_SPEED_MODE; tc.timer_num = LEDC_TIMER_1; tc.duty_resolution = LEDC_TIMER_8_BIT; tc.freq_hz = 5000; tc.clk_cfg = LEDC_AUTO_CLK;
