@@ -16,11 +16,15 @@
 #include "../boards/cyd35r.h"
 #elif defined(AITL_BOARD_HOSYOND40R)
 #include "../boards/hosyond40r.h"
+#elif defined(AITL_BOARD_CYD43)
+#include "../boards/cyd43.h"
 #else
 #include "../boards/cyd28c.h"
 #endif
 
-#if defined(AITL_PANEL_ST7796)
+#if defined(AITL_PANEL_RGB)
+#define TFT_PANEL_NAME "rgb"
+#elif defined(AITL_PANEL_ST7796)
 #define TFT_PANEL_NAME "st7796"
 #elif defined(AITL_PANEL_ST7789)
 #define TFT_PANEL_NAME "st7789"

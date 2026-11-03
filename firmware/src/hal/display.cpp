@@ -46,6 +46,50 @@ class Touch_XPT2046_BitBang : public lgfx::ITouch {
 };
 #endif
 
+#if defined(AITL_PANEL_RGB)
+// --- CYD43 (ESP32-4827S043): 480x272 RGB-parallel panel (ST7262) + GT911 touch on ESP32-S3. ---
+// WIP port. The framebuffer lives in OCTAL PSRAM, so this env MUST build with PSRAM enabled.
+// Pins come from boards/cyd43.h (same values the proven gadget port uses on this hardware).
+class LGFX : public lgfx::LGFX_Device {
+  lgfx::Bus_RGB     _bus;
+  lgfx::Panel_RGB   _panel;
+  lgfx::Light_PWM   _light;
+  lgfx::Touch_GT911 _touch;
+ public:
+  LGFX() {
+    { auto c = _panel.config();
+      c.memory_width = TFT_NATIVE_W; c.memory_height = TFT_NATIVE_H;
+      c.panel_width  = TFT_NATIVE_W; c.panel_height  = TFT_NATIVE_H;
+      c.offset_x = 0; c.offset_y = 0;
+      _panel.config(c); }
+    { auto c = _panel.config_detail();
+      c.use_psram = 1;   // framebuffer streamed from octal PSRAM (ST7262 is a dumb panel)
+      _panel.config_detail(c); }
+    { auto c = _bus.config();
+      c.panel = &_panel;
+      c.pin_d0  = PIN_RGB_D0;  c.pin_d1  = PIN_RGB_D1;  c.pin_d2  = PIN_RGB_D2;  c.pin_d3  = PIN_RGB_D3;
+      c.pin_d4  = PIN_RGB_D4;  c.pin_d5  = PIN_RGB_D5;  c.pin_d6  = PIN_RGB_D6;  c.pin_d7  = PIN_RGB_D7;
+      c.pin_d8  = PIN_RGB_D8;  c.pin_d9  = PIN_RGB_D9;  c.pin_d10 = PIN_RGB_D10; c.pin_d11 = PIN_RGB_D11;
+      c.pin_d12 = PIN_RGB_D12; c.pin_d13 = PIN_RGB_D13; c.pin_d14 = PIN_RGB_D14; c.pin_d15 = PIN_RGB_D15;
+      c.pin_henable = PIN_RGB_DE; c.pin_vsync = PIN_RGB_VSYNC; c.pin_hsync = PIN_RGB_HSYNC; c.pin_pclk = PIN_RGB_PCLK;
+      c.freq_write = RGB_PCLK_HZ;
+      c.hsync_polarity = 0; c.hsync_front_porch = RGB_HSYNC_FP; c.hsync_pulse_width = RGB_HSYNC_PW; c.hsync_back_porch = RGB_HSYNC_BP;
+      c.vsync_polarity = 0; c.vsync_front_porch = RGB_VSYNC_FP; c.vsync_pulse_width = RGB_VSYNC_PW; c.vsync_back_porch = RGB_VSYNC_BP;
+      c.pclk_active_neg = 1; c.de_idle_high = 0; c.pclk_idle_high = 0;
+      _bus.config(c); _panel.setBus(&_bus); }
+    { auto c = _light.config(); c.pin_bl = PIN_TFT_BL; c.invert = false; c.freq = 12000; c.pwm_channel = 7; _light.config(c); _panel.setLight(&_light); }
+    { auto c = _touch.config();
+      c.x_min = 0; c.x_max = TFT_NATIVE_W - 1; c.y_min = 0; c.y_max = TFT_NATIVE_H - 1;
+      c.pin_int = -1; c.pin_rst = PIN_TOUCH_RST; c.bus_shared = false; c.offset_rotation = 0;
+      c.i2c_port = 0; c.i2c_addr = TOUCH_I2C_ADDR; c.pin_sda = PIN_TOUCH_SDA; c.pin_scl = PIN_TOUCH_SCL; c.freq = 400000;
+      _touch.config(c); _panel.setTouch(&_touch); }
+    setPanel(&_panel);
+  }
+  void applyPanelFlags(bool invert, bool bgr) {   // RGB panel: only rgb_order is meaningful
+    auto c = _panel.config(); c.rgb_order = bgr; _panel.config(c); (void)invert;
+  }
+};
+#else
 class LGFX : public lgfx::LGFX_Device {
 #if defined(AITL_PANEL_ST7796)
   lgfx::Panel_ST7796 _panel;
@@ -111,6 +155,7 @@ class LGFX : public lgfx::LGFX_Device {
     auto c = _panel.config(); c.invert = invert; c.rgb_order = bgr; _panel.config(c);
   }
 };
+#endif  // AITL_PANEL_RGB
 
 static LGFX tft;
 static constexpr uint16_t kBufLinesMax = (TFT_NATIVE_H > 320) ? 12 : 32;   // 480-wide boards: 2 x 480x12 RGB565 = 23 KB (keeps ~80 KB free with an applet up); 320-wide: 2 x 320x32 = 41 KB. DMA overlaps render with transfer
