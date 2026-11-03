@@ -53,3 +53,36 @@
 #define PIN_TOUCH_SCL 20
 #define PIN_TOUCH_RST 38
 #define TOUCH_I2C_ADDR 0x5d
+#define PIN_TOUCH_INT  -1    // GT911 INT not wired into the touch driver here (LovyanGFX polls)
+#define TOUCH_INT_GATE_MS 0  // CST8xx ghost-touch gating constants (unused on GT911, defined for the build)
+#define TOUCH_STUCK_MS    0
+
+// --- BOOT button (GPIO0) ---
+#define PIN_BTN_BOOT 0
+
+// --- Not present / not yet wired on this board: define safe (-1) so the shared code compiles. ---
+// TODO(bring-up): the 4827 has a microSD and a speaker; fill these from the schematic when added.
+#define PIN_LED_R    -1
+#define PIN_LED_G    -1
+#define PIN_LED_B    -1
+#define PIN_SPEAKER  -1
+#define PIN_SD_SCK   -1
+#define PIN_SD_MISO  -1
+#define PIN_SD_MOSI  -1
+#define PIN_SD_CS    -1
+#define PIN_MIC_SCK  -1
+#define PIN_MIC_WS   -1
+#define PIN_MIC_SD   -1
+// SPI panel + resistive-touch pins — unused on this RGB/GT911 board (the SPI LGFX path is #else-guarded).
+#define PIN_TFT_SCLK -1
+#define PIN_TFT_MOSI -1
+#define PIN_TFT_MISO -1
+#define PIN_TFT_CS   -1
+#define PIN_TFT_DC   -1
+#define PIN_TFT_RST  -1
+#define PIN_TOUCH_CS   -1
+#define PIN_TOUCH_CLK  -1
+#define PIN_TOUCH_MISO -1
+#define PIN_TOUCH_MOSI -1
+#define PIN_TOUCH_IRQ  -1
+#define TOUCH_SPI_HZ   1600000

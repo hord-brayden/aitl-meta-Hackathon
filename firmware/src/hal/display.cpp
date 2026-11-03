@@ -4,6 +4,12 @@
 #include "../config.h"
 #include "../core/settings.h"
 #include "led.h"
+#if defined(AITL_PANEL_RGB)
+// The RGB-parallel bus/panel classes aren't in the default umbrella; pull them in explicitly (ESP32-S3 only).
+// Must come AFTER config.h so AITL_PANEL_RGB is defined.
+#include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
+#include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
+#endif
 
 #if defined(AITL_TOUCH_XPT2046)
 // Resistive XPT2046 on its own pins, bit-banged (the ESP32's two SPI hosts are taken by the panel and the microSD).

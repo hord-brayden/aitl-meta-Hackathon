@@ -3,6 +3,9 @@
 #include <SD.h>
 #include "../config.h"
 
+#if !defined(VSPI)      // ESP32-S3 has no VSPI (classic-ESP32 name); it uses FSPI/HSPI. SD is disabled on such boards for now.
+#define VSPI HSPI
+#endif
 static SPIClass s_vspi(VSPI);
 static bool s_ready = false;
 static uint32_t s_lastProbe = 0;
