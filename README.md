@@ -43,7 +43,7 @@ screen back. Up to five applets stay on the device; tap the title bar to switch.
 | Actions: `tone` (speaker), `led`, `pwm`, `gpio.read/write`, `adc.read`, `i2c.scan/read/write`, `draw.rect/text`, `http`, `muse.say` (posts into your Muse chat), `muse.ask`, `vm.write` | same |
 | Touchscreen: XPT2046 (resistive, on the LCD bus) or CST820 (capacitive, I²C), 3-tap on-screen calibration, launcher with the stored applets | same |
 | Images from Muse: `display.draw_file` straight from Muse's VM over the encrypted session (160 px JPEG in 307 ms), `display.draw_url` over plain `http://`, Meta's status animation replaced by your own Muse sprite | `gadget/port/gen_avatar_anim.py` |
-| Verified applets Muse wrote unaided from one sentence each: door tally, pomodoro, dice, sketch pad, today's calendar (Muse reads Google Calendar on its VM and puts the events on the device) | the Muse app |
+| Verified applets Muse wrote unaided from one sentence each: door tally, pomodoro, dice + life counter, sketch pad, today's calendar (Muse reads Google Calendar on its VM and puts the events on the device), a live CO₂ air-quality monitor (SCD41 over I²C), and a live tech-news reader (over `http`) | the Muse app |
 | Several Wi-Fi networks: `wifi.add/list/forget` from Muse, or `gadget/wifi.py` over USB from a gitignored `.env` | `gadget/wifi.py` |
 | microSD card, mounted only while in use: logs from applets, and an offline image cache (`sd` fetch from Muse's VM, draw from the card) | `gadget/port/musecorder/musecorder_sd.c` |
 | Ready-made applets to paste into the Muse chat: door tally, sketch pad, dice, voltmeter, I²C scanner | [`examples/gadget/`](examples/gadget/) |
