@@ -1443,8 +1443,8 @@ static void settingsDraw() {
 #if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
     items.push_back({s_rot ? "Go portrait" : "Go landscape", "orient"});   // portrait(0) <-> landscape(1)
     if (s_rot) items.push_back({"Flip 180", "flipland"});                   // in landscape: pick which way is up (1 <-> 2)
-#else
-    if (s_phys_w > s_phys_h) items.push_back({s_rot ? "Go landscape" : "Go portrait", "orient"});
+#elif !CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB
+    if (s_phys_w > s_phys_h) items.push_back({s_rot ? "Go landscape" : "Go portrait", "orient"});   // the 4827 is fixed landscape (180 is a driver-side mirror), so it offers no orient toggle
 #endif
     items.push_back({musecorder_hid_mode_active() ? "Exit HID keyboard" : "HID keyboard mode", "hidmode"});
     items.push_back({"Reboot", "reboot"});
@@ -1879,6 +1879,9 @@ extern "C" void musecorder_init(void) {
     if (!s_cfg_present) s_rot = 1;   // fresh StickS3 (watch) defaults to landscape; once chosen, portrait(0)/landscape(1,2) are respected
 #else
     if (s_phys_w <= s_phys_h) s_rot = 0;   // rotation only makes sense on a landscape-native panel
+#endif
+#if CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB
+    s_rot = 0;   // the 4827 is a fixed landscape install; its 180 flip lives in the panel driver (mirror), never in s_rot. Force native landscape so a stale or mis-tapped rotation in cfg can't strand it in portrait with an offset touch map.
 #endif
     if (s_phys_w > 0) { s_screen_w = s_rot ? s_phys_h : s_phys_w; s_screen_h = s_rot ? s_phys_w : s_phys_h; }
     else s_screen_w = 0;
