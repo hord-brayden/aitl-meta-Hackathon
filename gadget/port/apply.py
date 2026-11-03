@@ -103,9 +103,9 @@ b = root / "main" / "ble_server.c"
 t = b.read_text()
 if "CYD_RANDOM_ADDR" not in t:
     t = t.replace("    rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,",
-                  "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796   /* CYD_RANDOM_ADDR */\n    rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, NULL, BLE_HS_FOREVER,\n#else\n    rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,\n#endif", 1)
+                  "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796 || CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789 || CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341   /* CYD_RANDOM_ADDR */\n    rc = ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, NULL, BLE_HS_FOREVER,\n#else\n    rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,\n#endif", 1)
     t = t.replace("    s_synced = true;\n    start_advertising();",
-                  "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796\n    { ble_addr_t ra; if (ble_hs_id_gen_rnd(1, &ra) == 0 && ble_hs_id_set_rnd(ra.val) == 0) ESP_LOGI(TAG, \"random static addr %02x:%02x:%02x:%02x:%02x:%02x\", ra.val[5], ra.val[4], ra.val[3], ra.val[2], ra.val[1], ra.val[0]); else ESP_LOGW(TAG, \"random addr failed; using public\"); }\n#endif\n    s_synced = true;\n    start_advertising();", 1)
+                  "#if CONFIG_HOMEHUB_LED_BACKEND_CYD_ILI9341 || CONFIG_HOMEHUB_LED_BACKEND_CYD_ST7796 || CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789 || CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341\n    { ble_addr_t ra; if (ble_hs_id_gen_rnd(1, &ra) == 0 && ble_hs_id_set_rnd(ra.val) == 0) ESP_LOGI(TAG, \"random static addr %02x:%02x:%02x:%02x:%02x:%02x\", ra.val[5], ra.val[4], ra.val[3], ra.val[2], ra.val[1], ra.val[0]); else ESP_LOGW(TAG, \"random addr failed; using public\"); }\n#endif\n    s_synced = true;\n    start_advertising();", 1)
     b.write_text(t); print("  patched main/ble_server.c (random static address on CYD boards)")
 
 # --- CYD: small control-session buffers (no PSRAM: the default 81 KB of session buffers never fit beside TLS -> "session buffer alloc failed") ---
@@ -130,7 +130,7 @@ for name in ("happy_anim.c", "happy_anim.h"):
 
 # --- CYD: Musecorder applet runtime (gadget/port/musecorder -> main/, commands applet.*) ---
 mc = pathlib.Path(__file__).resolve().parent / "musecorder"
-for name in ("musecorder.cpp", "musecorder.h", "musecorder_sd.c", "musecorder_sd.h", "musecorder_hid.c", "musecorder_hid.h"):
+for name in ("musecorder.cpp", "musecorder.h", "musecorder_sd.c", "musecorder_sd.h", "musecorder_hid.c", "musecorder_hid.h", "musecorder_ir.c", "musecorder_ir.h"):
     srcf = mc / name; dst = root / "main" / name
     if not dst.exists() or dst.read_bytes() != srcf.read_bytes():
         dst.write_bytes(srcf.read_bytes()); print(f"  copied main/{name}")
@@ -142,6 +142,10 @@ if "    esp_adc\n" not in t:
 if "    \"musecorder_hid.c\"\n" not in t:
     t = t.replace('    "musecorder.cpp"\n', '    "musecorder.cpp"\n    "musecorder_hid.c"\n', 1)
     cm.write_text(t); print("  patched main/CMakeLists.txt (musecorder_hid.c)")
+if '"musecorder_ir.c"' not in t:
+    t = t.replace('    "musecorder.cpp"\n', '    "musecorder.cpp"\n    "musecorder_ir.c"\n', 1)
+    t = t.replace("    esp_driver_gpio\n", "    esp_driver_gpio\n    esp_driver_rmt\n", 1)
+    cm.write_text(t); print("  patched main/CMakeLists.txt (musecorder_ir.c + esp_driver_rmt)")
 if '"musecorder_sd.c"' not in t:
     t = t.replace('    "musecorder.cpp"\n', '    "musecorder.cpp"\n    "musecorder_sd.c"\n', 1)
     t = t.replace("    esp_adc\n", "    esp_adc\n    fatfs\n    sdmmc\n    esp_driver_sdspi\n", 1); cm.write_text(t); print("  patched main/CMakeLists.txt (microSD)")
@@ -252,7 +256,7 @@ if "musecorder_hid_svcs" not in t:
                   "#if CONFIG_HOMEHUB_MUSECORDER\n"
                   "    {\n"
                   "        const struct ble_gatt_svc_def *hid = musecorder_hid_svcs();\n"
-                  "        if (hid && musecorder_hid_mode_active()) {   // HID svc only in HID mode; otherwise iOS claims the device as a keyboard and the Muse app cannot pair it\n"
+                  "        if (hid && musecorder_hid_mode_active()) {   // only in HID mode; a HID svc in Muse mode makes iOS claim the device as a keyboard and hides it from the Muse app\n"
                   "            int rc_hid = ble_gatts_count_cfg(hid);\n"
                   "            if (rc_hid == 0) rc_hid = ble_gatts_add_svcs(hid);\n"
                   "            if (rc_hid != 0) ESP_LOGE(TAG, \"musecorder HID gatts add rc=%d\", rc_hid);\n"
@@ -600,3 +604,298 @@ if "4827S043_RGB" not in t:
         "#endif\n\n"
         "static bool led_hw_init(void) {\n    s_bar_buf = heap_caps_malloc", 1)
     ls.write_text(t); print("  patched led_status.c (4827 RGB backend)")
+
+# --- M5Stack StickS3: Musecorder/Link build (ST7789 LCD + M5PM1 power) ---
+# Not Meta's voice-UI board: MUSE_ENABLED stays off and MUSECORDER on, so the stick
+# pairs in the normal Muse app and runs the applet engine like the 4827. Its colour
+# LCD is a self-contained backend (sticks3_lcd.c) that powers the panel rail via the
+# M5PM1 chip before bringing up the SPI ST7789.
+shutil.copy(here / "sdkconfig.sticks3", root / "devices" / "sdkconfig.sticks3")
+shutil.copy(here / "sticks3_lcd.c", root / "main" / "sticks3_lcd.c")
+shutil.copy(here / "sticks3_lcd.h", root / "main" / "sticks3_lcd.h")
+shutil.copy(here / "sticks3_bmi270_config.h", root / "main" / "sticks3_bmi270_config.h")   # Bosch BMI270 init blob (BSD-3), #included by sticks3_lcd.c
+shutil.copy(here / "partitions_sticks3.csv", root / "partitions_sticks3.csv")
+print("  copied devices/sdkconfig.sticks3, main/sticks3_lcd.c, main/sticks3_lcd.h, main/sticks3_bmi270_config.h, partitions_sticks3.csv")
+
+cm = root / "main" / "CMakeLists.txt"; t = cm.read_text()
+if '"sticks3_lcd.c"' not in t:
+    t = t.replace('    "ssd1306.c"\n', '    "ssd1306.c"\n    "sticks3_lcd.c"\n', 1)
+    cm.write_text(t); print("  patched main/CMakeLists.txt (sticks3_lcd.c)")
+
+# Ungate the Muse "typing" status sprite (avatar/happy_anim.c) for the StickS3. It
+# is gated to CONFIG_HOMEHUB_DISPLAY boards; the stick is a separate backend, so
+# the sprite data isn't compiled there. Ungate it so musecorder can play the same
+# smooth animation on the stick's idle screen (costs ~115 KB flash; the stick has 8 MB).
+for _hap in ("happy_anim.c", "happy_anim.h"):   # both guard their bodies with CONFIG_HOMEHUB_DISPLAY
+    _p = root / "avatar" / _hap; _t = _p.read_text()
+    if "CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789" not in _t:
+        _t = _t.replace("#if CONFIG_HOMEHUB_DISPLAY\n",
+                        "#if CONFIG_HOMEHUB_DISPLAY || CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n", 1)
+        _p.write_text(_t); print(f"  patched avatar/{_hap} (ungate sprite for StickS3)")
+
+kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
+if '"M5Stack StickS3 1.14 inch ST7789 colour LCD"' not in t:
+    t = t.replace("        config HOMEHUB_LED_BACKEND_SENSECAP_ST7701\n", (
+        "        config HOMEHUB_LED_BACKEND_STICKS3_ST7789\n"
+        "            bool \"M5Stack StickS3 1.14 inch ST7789 colour LCD\"\n"
+        "            depends on IDF_TARGET_ESP32S3\n"
+        "            help\n"
+        "                The M5Stack StickS3: a 1.14 inch 135x240 ST7789 colour LCD whose power\n"
+        "                rail sits behind the M5PM1 chip. Musecorder draws its UI here; no Meta voice UI.\n"
+        "\n"
+        "        config HOMEHUB_LED_BACKEND_SENSECAP_ST7701\n"), 1)
+    kc.write_text(t); print("  patched main/Kconfig.projbuild (STICKS3 ST7789 backend)")
+
+# Let MUSECORDER be selectable with the StickS3 backend too (runs after the 4827 patch).
+kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
+if "SSD1306_I2C || HOMEHUB_LED_BACKEND_4827S043_RGB || HOMEHUB_LED_BACKEND_STICKS3_ST7789" not in t:
+    t = t.replace(
+        "        depends on HOMEHUB_LED_BACKEND_CYD_ILI9341 || HOMEHUB_LED_BACKEND_CYD_ST7796 || HOMEHUB_LED_BACKEND_SSD1306_I2C || HOMEHUB_LED_BACKEND_4827S043_RGB\n",
+        "        depends on HOMEHUB_LED_BACKEND_CYD_ILI9341 || HOMEHUB_LED_BACKEND_CYD_ST7796 || HOMEHUB_LED_BACKEND_SSD1306_I2C || HOMEHUB_LED_BACKEND_4827S043_RGB || HOMEHUB_LED_BACKEND_STICKS3_ST7789\n", 1)
+    kc.write_text(t); print("  patched main/Kconfig.projbuild (MUSECORDER depends: STICKS3)")
+
+ls = root / "main" / "led_status.c"; t = ls.read_text()
+if "STICKS3_ST7789" not in t:
+    t = t.replace(
+        '#include "led_status.h"\n#if CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n#include "ssd1306.h"\n#include "pixel_font.h"\n#endif\n',
+        '#include "led_status.h"\n#if CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n#include "ssd1306.h"\n#include "pixel_font.h"\n#endif\n#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n#include "sticks3_lcd.h"\n#endif\n', 1)
+    stick_branch = r'''#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+// M5Stack StickS3 1.14" ST7789 colour LCD (Musecorder/Link build; no Meta voice UI).
+// The panel and M5PM1 power live in sticks3_lcd.c. musecorder owns the screen (idle,
+// launcher, applets); these hooks bring the panel up and keep COLOR_* referenced.
+static bool rgb_eq(rgb_t a, rgb_t b) { return a.r == b.r && a.g == b.g && a.b == b.b; }
+
+static void led_hw_set_color(rgb_t c) {
+    // No standalone status LED on this board; musecorder draws link state on the LCD.
+    // Touch the named colours so -Werror=unused-const-variable stays satisfied.
+    (void)(rgb_eq(c, COLOR_OFF) || rgb_eq(c, COLOR_BLUE) || rgb_eq(c, COLOR_GREEN)
+        || rgb_eq(c, COLOR_PURPLE) || rgb_eq(c, COLOR_RED) || rgb_eq(c, COLOR_YELLOW)
+        || rgb_eq(c, COLOR_ORANGE) || rgb_eq(c, COLOR_DIM_ORANGE));
+}
+
+static void led_hw_set_connected(void) { led_hw_set_color(COLOR_GREEN); }
+
+static void led_hw_set_title(const char *text) { (void)text; }
+
+static bool led_hw_init(void) {
+    if (!sticks3_lcd_init()) return false;
+    ESP_LOGI(TAG, "StickS3 ST7789 backend ready");
+    return true;
+}
+
+'''
+    t = t.replace("#elif CONFIG_HOMEHUB_DISPLAY\nstatic esp_lcd_panel_handle_t s_panel = NULL;",
+                  stick_branch + "#elif CONFIG_HOMEHUB_DISPLAY\nstatic esp_lcd_panel_handle_t s_panel = NULL;", 1)
+    t = t.replace("#if !CONFIG_HOMEHUB_DISPLAY && !CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n#if !(CONFIG_HOMEHUB_LED_BACKEND_VOICE_RING",
+                  "#if !CONFIG_HOMEHUB_DISPLAY && !CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C && !CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n#if !(CONFIG_HOMEHUB_LED_BACKEND_VOICE_RING", 1)
+    t = t.replace(
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    if (!ssd1306_ready()) return false;\n    *width = SSD1306_W;\n    *height = SSD1306_H;\n    return true;\n",
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    if (!ssd1306_ready()) return false;\n    *width = SSD1306_W;\n    *height = SSD1306_H;\n    return true;\n#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    if (!sticks3_lcd_ready()) return false;\n    *width = sticks3_lcd_width();\n    *height = sticks3_lcd_height();\n    return true;\n", 1)
+    t = t.replace(
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    return ssd1306_ready() ? 1 : 0;\n",
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    return ssd1306_ready() ? 1 : 0;\n#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    return sticks3_lcd_ready() ? 16 : 0;\n", 1)
+    t = t.replace(
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    if (!ssd1306_ready() || x < 0 || y < 0 || w <= 0 || h <= 0\n        || x + w > SSD1306_W || y + h > SSD1306_H) {\n        return false;\n    }\n    if (!s_oled_image) { s_oled_image = true; ssd1306_clear(); ssd1306_flush(); }\n    ssd1306_blit_rgb565(x, y, w, h, pixels);\n    ssd1306_flush_rows(y, y + h);\n    return true;\n",
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    if (!ssd1306_ready() || x < 0 || y < 0 || w <= 0 || h <= 0\n        || x + w > SSD1306_W || y + h > SSD1306_H) {\n        return false;\n    }\n    if (!s_oled_image) { s_oled_image = true; ssd1306_clear(); ssd1306_flush(); }\n    ssd1306_blit_rgb565(x, y, w, h, pixels);\n    ssd1306_flush_rows(y, y + h);\n    return true;\n#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    return sticks3_lcd_draw(x, y, w, h, pixels);\n", 1)
+    t = t.replace(
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    s_oled_image = false;\n    oled_status_screen();\n",
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C\n    s_oled_image = false;\n    oled_status_screen();\n#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    /* musecorder redraws its portrait idle itself */\n", 1)
+    ls.write_text(t); print("  patched led_status.c (StickS3 ST7789 backend)")
+
+# --- LCD Wiki 2.8" ESP32-S3 Display (E32C28P): Musecorder/Link build (ILI9341 LCD + FT6336 touch) ---
+# A touch board like the 4827 (not a button board like the stick): MUSE_ENABLED off,
+# MUSECORDER on, pairs in the normal Muse app, Muse codes applets, FT6336 drives the
+# launcher. Its colour LCD is a self-contained ILI9341 SPI backend (cyd28_lcd.c); no PMIC.
+shutil.copy(here / "sdkconfig.cyd28", root / "devices" / "sdkconfig.cyd28")
+shutil.copy(here / "cyd28_lcd.c", root / "main" / "cyd28_lcd.c")
+shutil.copy(here / "cyd28_lcd.h", root / "main" / "cyd28_lcd.h")
+shutil.copy(here / "partitions_cyd28_16mb.csv", root / "partitions_cyd28_16mb.csv")
+print("  copied devices/sdkconfig.cyd28, main/cyd28_lcd.c, main/cyd28_lcd.h, partitions_cyd28_16mb.csv")
+
+cm = root / "main" / "CMakeLists.txt"; t = cm.read_text()
+if '"cyd28_lcd.c"' not in t:
+    t = t.replace('    "sticks3_lcd.c"\n', '    "sticks3_lcd.c"\n    "cyd28_lcd.c"\n', 1)
+    cm.write_text(t); print("  patched main/CMakeLists.txt (cyd28_lcd.c)")
+
+# Ungate the Muse "typing" status sprite for CYD28 too (musecorder #includes it
+# unconditionally; on a non-HOMEHUB_DISPLAY backend it must still be compiled in).
+for _hap in ("happy_anim.c", "happy_anim.h"):
+    _p = root / "avatar" / _hap; _t = _p.read_text()
+    if "CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341" not in _t:
+        _t = _t.replace("#if CONFIG_HOMEHUB_DISPLAY || CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n",
+                        "#if CONFIG_HOMEHUB_DISPLAY || CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789 || CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341\n", 1)
+        _p.write_text(_t); print(f"  patched avatar/{_hap} (ungate sprite for CYD28)")
+
+kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
+if "HOMEHUB_LED_BACKEND_CYD28_ILI9341" not in t:
+    t = t.replace("        config HOMEHUB_LED_BACKEND_STICKS3_ST7789\n", (
+        "        config HOMEHUB_LED_BACKEND_CYD28_ILI9341\n"
+        "            bool \"LCD Wiki 2.8 inch ESP32-S3 ILI9341 colour LCD\"\n"
+        "            depends on IDF_TARGET_ESP32S3\n"
+        "            help\n"
+        "                The LCD Wiki 2.8 inch ESP32-S3 display (E32C28P): a 240x320 ILI9341 colour\n"
+        "                LCD on SPI with FT6336 capacitive touch. Musecorder draws its UI here.\n"
+        "\n"
+        "        config HOMEHUB_LED_BACKEND_STICKS3_ST7789\n"), 1)
+    kc.write_text(t); print("  patched main/Kconfig.projbuild (CYD28 ILI9341 backend)")
+
+kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
+if "STICKS3_ST7789 || HOMEHUB_LED_BACKEND_CYD28_ILI9341" not in t:
+    t = t.replace(
+        "        depends on HOMEHUB_LED_BACKEND_CYD_ILI9341 || HOMEHUB_LED_BACKEND_CYD_ST7796 || HOMEHUB_LED_BACKEND_SSD1306_I2C || HOMEHUB_LED_BACKEND_4827S043_RGB || HOMEHUB_LED_BACKEND_STICKS3_ST7789\n",
+        "        depends on HOMEHUB_LED_BACKEND_CYD_ILI9341 || HOMEHUB_LED_BACKEND_CYD_ST7796 || HOMEHUB_LED_BACKEND_SSD1306_I2C || HOMEHUB_LED_BACKEND_4827S043_RGB || HOMEHUB_LED_BACKEND_STICKS3_ST7789 || HOMEHUB_LED_BACKEND_CYD28_ILI9341\n", 1)
+    kc.write_text(t); print("  patched main/Kconfig.projbuild (MUSECORDER depends: CYD28)")
+
+ls = root / "main" / "led_status.c"; t = ls.read_text()
+if "CYD28_ILI9341" not in t:
+    t = t.replace(
+        '#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n#include "sticks3_lcd.h"\n#endif\n',
+        '#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n#include "sticks3_lcd.h"\n#endif\n#if CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341\n#include "cyd28_lcd.h"\n#endif\n', 1)
+    cyd28_branch = r'''#elif CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+// LCD Wiki 2.8" ESP32-S3 ILI9341 colour LCD (Musecorder/Link build). The panel lives in
+// cyd28_lcd.c; musecorder owns the screen (idle, launcher, applets). These hooks bring
+// the panel up and keep COLOR_* referenced.
+static bool rgb_eq(rgb_t a, rgb_t b) { return a.r == b.r && a.g == b.g && a.b == b.b; }
+
+static void led_hw_set_color(rgb_t c) {
+    (void)(rgb_eq(c, COLOR_OFF) || rgb_eq(c, COLOR_BLUE) || rgb_eq(c, COLOR_GREEN)
+        || rgb_eq(c, COLOR_PURPLE) || rgb_eq(c, COLOR_RED) || rgb_eq(c, COLOR_YELLOW)
+        || rgb_eq(c, COLOR_ORANGE) || rgb_eq(c, COLOR_DIM_ORANGE));
+}
+
+static void led_hw_set_connected(void) { led_hw_set_color(COLOR_GREEN); }
+
+static void led_hw_set_title(const char *text) { (void)text; }
+
+static bool led_hw_init(void) {
+    if (!cyd28_lcd_init()) return false;
+    ESP_LOGI(TAG, "CYD28 ILI9341 backend ready");
+    return true;
+}
+
+'''
+    t = t.replace("#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n// M5Stack StickS3 1.14",
+                  cyd28_branch + "#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n// M5Stack StickS3 1.14", 1)
+    t = t.replace("#if !CONFIG_HOMEHUB_DISPLAY && !CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C && !CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n#if !(CONFIG_HOMEHUB_LED_BACKEND_VOICE_RING",
+                  "#if !CONFIG_HOMEHUB_DISPLAY && !CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C && !CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789 && !CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341\n#if !(CONFIG_HOMEHUB_LED_BACKEND_VOICE_RING", 1)
+    t = t.replace(
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    if (!sticks3_lcd_ready()) return false;\n    *width = sticks3_lcd_width();\n    *height = sticks3_lcd_height();\n    return true;\n",
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    if (!sticks3_lcd_ready()) return false;\n    *width = sticks3_lcd_width();\n    *height = sticks3_lcd_height();\n    return true;\n#elif CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341\n    if (!cyd28_lcd_ready()) return false;\n    *width = cyd28_lcd_width();\n    *height = cyd28_lcd_height();\n    return true;\n", 1)
+    t = t.replace(
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    return sticks3_lcd_ready() ? 16 : 0;\n",
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    return sticks3_lcd_ready() ? 16 : 0;\n#elif CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341\n    return cyd28_lcd_ready() ? 16 : 0;\n", 1)
+    t = t.replace(
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    return sticks3_lcd_draw(x, y, w, h, pixels);\n",
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    return sticks3_lcd_draw(x, y, w, h, pixels);\n#elif CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341\n    return cyd28_lcd_draw(x, y, w, h, pixels);\n", 1)
+    t = t.replace(
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    /* musecorder redraws its portrait idle itself */\n",
+        "#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789\n    /* musecorder redraws its portrait idle itself */\n#elif CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341\n    /* musecorder redraws its idle itself */\n", 1)
+    ls.write_text(t); print("  patched led_status.c (CYD28 ILI9341 backend)")
+
+# --- StickS3: push-to-talk voice chat (HOMEHUB_VOICE). A voice_board using the
+#     on-board ES8311 codec (mic capture at 16 kHz); musecorder forwards a held blue
+#     button into the voice engine, and the reply comes back as text in the Muse app.
+shutil.copy(here / "voice_board_sticks3.c", root / "main" / "voice_board_sticks3.c")
+shutil.copy(here / "voice_board_cyd28.c", root / "main" / "voice_board_cyd28.c")
+print("  copied main/voice_board_sticks3.c, main/voice_board_cyd28.c")
+
+cm = root / "main" / "CMakeLists.txt"; t = cm.read_text()
+if '"voice_board_sticks3.c"' not in t:
+    needle = ('    if(CONFIG_HOMEHUB_LED_BACKEND_RESPEAKER_LITE)\n'
+              '        list(APPEND GADGET_SRCS "voice_board_respeaker_lite.c")\n'
+              '    else()')
+    if needle not in t: sys.exit("apply.py: voice board selection anchor not found in CMakeLists.txt")
+    t = t.replace(needle,
+        '    if(CONFIG_HOMEHUB_LED_BACKEND_RESPEAKER_LITE)\n'
+        '        list(APPEND GADGET_SRCS "voice_board_respeaker_lite.c")\n'
+        '    elseif(CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789)\n'
+        '        list(APPEND GADGET_SRCS "voice_board_sticks3.c")\n'
+        '    else()', 1)
+    cm.write_text(t); print("  patched main/CMakeLists.txt (voice_board_sticks3.c)")
+cm = root / "main" / "CMakeLists.txt"; t = cm.read_text()
+if '"voice_board_cyd28.c"' not in t:
+    needle = ('    elseif(CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789)\n'
+              '        list(APPEND GADGET_SRCS "voice_board_sticks3.c")\n')
+    if needle not in t: sys.exit("apply.py: sticks3 voice elseif anchor not found")
+    t = t.replace(needle, needle +
+        '    elseif(CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341)\n'
+        '        list(APPEND GADGET_SRCS "voice_board_cyd28.c")\n', 1)
+    cm.write_text(t); print("  patched main/CMakeLists.txt (voice_board_cyd28.c)")
+cm_t = cm.read_text()
+if "    esp_codec_dev\n" not in cm_t:
+    cm_t = cm_t.replace("    esp_driver_i2s\n    esp_driver_pcnt\n",
+                        "    esp_driver_i2s\n    esp_driver_pcnt\n    esp_codec_dev\n", 1)
+    cm.write_text(cm_t); print("  patched main/CMakeLists.txt (esp_codec_dev require)")
+
+# The muse component only pulls esp_codec_dev in for Muse-board builds; declare it for
+# main so the ES8311 voice board can use it on the Link-stack stick too.
+y = root / "main" / "idf_component.yml"; t = y.read_text()
+if "esp_codec_dev" not in t:
+    t = t.replace('  espressif/esp_lcd_st7796: "^1"\n',
+                  '  espressif/esp_lcd_st7796: "^1"\n  espressif/esp_codec_dev: "~1.5"\n', 1)
+    y.write_text(t); print("  patched main/idf_component.yml (esp_codec_dev dependency)")
+
+kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
+# Guard on the ORIGINAL anchor's presence (not the result), so this stays idempotent even
+# after the CYD28 block below extends the same line (otherwise the result check re-fires).
+_vdep_old = "        depends on (HOMEHUB_LED_BACKEND_VOICE_RING || HOMEHUB_LED_BACKEND_RESPEAKER_LITE) && SPIRAM\n"
+if _vdep_old in t:
+    t = t.replace(_vdep_old,
+        "        depends on (HOMEHUB_LED_BACKEND_VOICE_RING || HOMEHUB_LED_BACKEND_RESPEAKER_LITE || HOMEHUB_LED_BACKEND_STICKS3_ST7789) && SPIRAM\n", 1)
+    kc.write_text(t); print("  patched main/Kconfig.projbuild (HOMEHUB_VOICE depends: STICKS3)")
+kc = root / "main" / "Kconfig.projbuild"; t = kc.read_text()
+if "STICKS3_ST7789 || HOMEHUB_LED_BACKEND_CYD28_ILI9341) && SPIRAM" not in t:
+    old = "HOMEHUB_LED_BACKEND_STICKS3_ST7789) && SPIRAM\n"
+    if old in t:
+        t = t.replace(old, "HOMEHUB_LED_BACKEND_STICKS3_ST7789 || HOMEHUB_LED_BACKEND_CYD28_ILI9341) && SPIRAM\n", 1)
+        kc.write_text(t); print("  patched main/Kconfig.projbuild (HOMEHUB_VOICE depends: CYD28)")
+
+# The voice LED-ring animation (ring_comet/ring_volume/voice_render) is gated by
+# CONFIG_HOMEHUB_VOICE but assumes an addressable ring; the stick has none (it shows
+# voice state on its LCD). Define a 1-"LED" ring and a no-op ring_show so that code
+# compiles harmlessly before the helpers that use them.
+ls = root / "main" / "led_status.c"; t = ls.read_text()
+if "no LED ring on the stick" not in t:
+    anchor = "static rgb_t scaled(rgb_t c, float level) {\n"
+    if anchor not in t: sys.exit("apply.py: led_status.c scaled() anchor not found")
+    t = t.replace(anchor,
+        "#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789 || CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341\n"
+        "#ifndef RING_LEDS\n"
+        "#define RING_LEDS 1   // no LED ring on the stick/CYD28; the voice UI draws on the LCD\n"
+        "#endif\n"
+        "static void ring_show(const rgb_t *px) { (void)px; }\n"
+        "#endif\n" + anchor, 1)
+    ls.write_text(t); print("  patched led_status.c (ring stubs for StickS3 voice)")
+
+vc = root / "main" / "voice.c"; t = vc.read_text()
+if "voice_ptt" not in t:
+    old_btn = "    button_set_press_cb(on_press);\n"
+    if old_btn not in t: sys.exit("apply.py: voice.c button_set_press_cb anchor not found")
+    t = t.replace(old_btn,
+        "#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789 || CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341\n"
+        "    (void)on_press;   // the StickS3/CYD28 drive voice_ptt() from musecorder (no spare button)\n"
+        "#else\n"
+        "    button_set_press_cb(on_press);\n"
+        "#endif\n", 1)
+    anchor = "static void voice_task(void *arg) {\n"
+    if anchor not in t: sys.exit("apply.py: voice.c voice_task anchor not found")
+    t = t.replace(anchor,
+        "// Push-to-talk entry for boards that own the button elsewhere (the StickS3\n"
+        "// forwards a held blue button here). Feeds the same queue as on_press.\n"
+        "void voice_ptt(bool pressed) {\n"
+        "    if (!atomic_load(&s_ready)) return;\n"
+        "    voice_evt_t evt = pressed ? EVT_PRESS : EVT_RELEASE;\n"
+        "    xQueueSend(s_events, &evt, 0);\n"
+        "}\n\n" + anchor, 1)
+    vc.write_text(t); print("  patched main/voice.c (voice_ptt + stick button handoff)")
+
+vh = root / "main" / "voice.h"; t = vh.read_text()
+if "voice_ptt" not in t:
+    old = "void voice_init(void);\n"
+    if old not in t: sys.exit("apply.py: voice.h voice_init anchor not found")
+    t = t.replace(old,
+        "void voice_init(void);\n\n"
+        "// Push-to-talk from a board that owns the button itself (StickS3): pressed=true\n"
+        "// starts a turn, false ends it. No-op until voice_init() has run.\n"
+        "void voice_ptt(bool pressed);\n", 1)
+    vh.write_text(t); print("  patched main/voice.h (voice_ptt prototype)")

@@ -1,0 +1,30 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Name,    Type, SubType, Offset,   Size,    Flags
+# M5Stack StickS3 (8 MB flash) — partitions_muse_8mb.csv with the Musecorder
+# applet store added. "applets" is its own NVS partition so applets never share
+# pages with Meta's pairing data (same split as partitions_cyd24_4mb.csv); the
+# musecorder applet store, launcher and persistence need it. nvs/otadata/phy_init
+# keep their original offsets so existing BLE bonds and Wi-Fi creds survive a
+# reflash. The dual-OTA app slots shrink to 0x340000 (3.25 MB each, still ~2x the
+# ~1.6 MB app) to make room for the 256 KB applet store before prod_data/prod_bak.
+nvs,       data, nvs,     0x11000,  0xC000,
+otadata,   data, ota,     0x1D000,  0x2000,
+phy_init,  data, phy,     0x1F000,  0x1000,
+ota_0,     app,  ota_0,   0x20000,  0x340000,
+ota_1,     app,  ota_1,   0x360000, 0x340000,
+applets,   data, nvs,     0x6A0000, 0x40000,
+prod_data, data, 0x40,    0x6E0000, 0x1000,
+prod_bak,  data, 0x41,    0x6E1000, 0x1000,

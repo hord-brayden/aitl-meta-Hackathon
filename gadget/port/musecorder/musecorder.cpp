@@ -15,11 +15,22 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "esp_netif_sntp.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "driver/i2c_master.h"
 #include "esp_adc/adc_oneshot.h"
+#include "musecorder_ir.h"
+#if CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+#include "cyd28_lcd.h"   // cyd28_lcd_brightness(): backlight is GPIO45, not the CYD default MC_PIN_BL
+#endif
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#include "sticks3_lcd.h"
+extern "C" {
+#include "happy_anim.h"   // Meta's Muse "typing" status sprite (ungated for the stick in apply.py)
+}
+#endif
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -40,6 +51,12 @@ extern "C" {
 #include "image_fetch.h"
 void app_touch_short_press(void);   // app.c: the BOOT tap (confirms pairing) and the 5 s hold (erases setup), from the touchscreen
 void app_touch_long_press(void);
+#if CONFIG_HOMEHUB_VOICE
+void voice_ptt(bool pressed);       // voice.c: push-to-talk (we drive it from a held blue button)
+#if CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+int voice_board_cyd28_peak(void);   // TEMP: last recording's mic level, for the on-screen "sent (mic N)" readout
+#endif
+#endif
 }
 #include "esp_system.h"
 #include "esp_sleep.h"
@@ -71,6 +88,14 @@ static cJSON *errorResult(const char *code, const char *message);
 #define MC_TAP_SAMPLES 1
 #elif CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB
 #define MC_TOUCH_GT911 1          // ESP32-4827S043: GT911 capacitive touch on I2C0 (SDA 19, SCL 20, RST 38)
+#define MC_PIN_AMP_EN -1
+#define MC_TAP_SAMPLES 2
+#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#define MC_BTN_NAV 1              // M5StickS3: no touch; blue btn (GPIO11)=select, side btn (GPIO12)=down
+#define MC_PIN_AMP_EN -1
+#define MC_TAP_SAMPLES 1
+#elif CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+#define MC_TOUCH_FT6336 1         // LCD Wiki 2.8" E32C28P: FT6336 capacitive touch on I2C0 (SDA 16, SCL 15, RST 18), address 0x38
 #define MC_PIN_AMP_EN -1
 #define MC_TAP_SAMPLES 2
 #else
@@ -260,6 +285,14 @@ static std::vector<std::string> storeIds() {
     free(txt); return ids;
 }
 static void storeSetIds(const std::vector<std::string> &ids) { std::string s; for (auto &i : ids) { if (!s.empty()) s += ","; s += i; } storeSet("ids", s.empty() ? nullptr : s.c_str()); }
+// Learned IR codes live in the same applet store, under "ir.*" keys: "ir.ids" is a
+// CSV of slot ids, "ir.<id>" is that code's durations as a CSV (microseconds).
+static std::vector<std::string> irIds() {
+    std::vector<std::string> ids; char *txt = storeGet("ir.ids", 128); if (!txt) return ids;
+    for (char *p = strtok(txt, ","); p; p = strtok(nullptr, ",")) if (*p) ids.push_back(p);
+    free(txt); return ids;
+}
+static void irSetIds(const std::vector<std::string> &ids) { std::string s; for (auto &i : ids) { if (!s.empty()) s += ","; s += i; } storeSet("ir.ids", s.empty() ? nullptr : s.c_str()); }
 static std::string key(const char *prefix, const std::string &id) { return std::string(prefix) + id; }
 static void storeDelete(const std::string &id) {
     auto ids = storeIds(); for (size_t i = 0; i < ids.size(); i++) if (ids[i] == id) { ids.erase(ids.begin() + i); break; }
@@ -297,6 +330,9 @@ static uint16_t *s_strip = nullptr;   // s_screen_w * STRIP_ROWS
 #if CONFIG_HOMEHUB_LED_BACKEND_SSD1306_I2C
 #define TOP_CLEAR 0                   // the mono OLED has no Meta status bars
 #define BTN_H 13
+#elif CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#define TOP_CLEAR 0                   // no Meta status bars here, and 135 px (landscape) is far too small to waste on margins
+#define BTN_H 26                      // the whole screen is ~135 px tall in landscape, so rows must be compact
 #else
 #define TOP_CLEAR 28                  // Meta's status bars live in the first and last rows
 #define BTN_H 44
@@ -308,17 +344,27 @@ static uint16_t hexColor(const std::string &in, uint16_t dflt) { std::string h =
 
 static bool ensureStrip() { if (!s_strip && s_screen_w > 0) s_strip = (uint16_t *)malloc(s_screen_w * STRIP_ROWS * sizeof(uint16_t)); return s_strip != nullptr; }
 // Display rotation: a landscape-native panel can present a portrait UI. musecorder draws in logical
-// coords; mcDrawRect rotates each strip to physical coords. s_rot 0 = native, 1 = 90 degrees.
+// coords; mcDrawRect rotates each strip to physical coords.
+// s_rot 0 = native. 1 = 90 degrees. 2 = 90 the other way (landscape rotated 180),
+// so a portrait-native panel (StickS3) can face either way on the strap. The flip
+// is only different index math — no extra buffers or flash.
 static int s_phys_w = 0, s_phys_h = 0, s_rot = 0;
 static uint16_t *s_rotbuf = nullptr;
 static void mcDrawRect(int x, int y, int w, int h, const uint16_t *buf) {
     if (s_rot == 0) { led_status_draw_rect(x, y, w, h, buf); return; }
     if (!s_rotbuf) s_rotbuf = (uint16_t *)malloc(s_screen_w * STRIP_ROWS * sizeof(uint16_t));
     if (!s_rotbuf) return;
-    for (int pr = 0; pr < w; pr++)
-        for (int pc = 0; pc < h; pc++)
-            s_rotbuf[pr * h + pc] = buf[(h - 1 - pc) * w + pr];
-    led_status_draw_rect(s_phys_w - y - h, x, h, w, s_rotbuf);   // physical rect: w/h swapped
+    if (s_rot == 2) {   // landscape, 180 from s_rot==1
+        for (int pr = 0; pr < w; pr++)
+            for (int pc = 0; pc < h; pc++)
+                s_rotbuf[pr * h + pc] = buf[pc * w + (w - 1 - pr)];
+        led_status_draw_rect(y, s_phys_h - x - w, h, w, s_rotbuf);
+    } else {            // s_rot == 1
+        for (int pr = 0; pr < w; pr++)
+            for (int pc = 0; pc < h; pc++)
+                s_rotbuf[pr * h + pc] = buf[(h - 1 - pc) * w + pr];
+        led_status_draw_rect(s_phys_w - y - h, x, h, w, s_rotbuf);   // physical rect: w/h swapped
+    }
 }
 static void fillRect(int x, int y, int w, int h, uint16_t color) {
     if (!ensureStrip()) return;
@@ -353,15 +399,147 @@ static void drawTextIn(int x, int y, int w, const std::string &text, int scale, 
 }
 static void drawText(int y, const std::string &text, int scale, uint16_t color) { drawTextIn(0, y, s_screen_w, text, scale, color, C_BG); }
 static bool s_idle_shown = false;
+// Largest scale (<= maxscale) at which `txt` fits the panel width; narrow portrait
+// panels like the 135px StickS3 need smaller text than the wide 4827.
+static int fitScale(const std::string &txt, int maxscale) {
+    int sc = maxscale;
+    while (sc > 1 && (int)txt.size() * (PIXEL_FONT_WIDTH * sc + sc) > s_screen_w) sc--;
+    return sc;
+}
+// Battery (StickS3 only; the CYD/4827 are USB-powered and have no PMIC gauge).
+// Returns -1 when unknown, else 0..100 percent; *usb is set when USB/5 V-in is
+// present (the M5PM1 has no charge-status register, so that is the charging proxy).
+static int battPct(bool *usb) {
+    if (usb) *usb = false;
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    uint16_t mv = 0; bool u = false;
+    if (!sticks3_battery(&mv, &u) || mv < 2500) return -1;   // <2.5 V: no cell / bad read
+    if (usb) *usb = u;
+    // The PM1 has no fuel gauge, so this is a resting-voltage estimate. It also
+    // terminates charge a little below the 4.20 V datasheet max, so a fully charged
+    // cell sits ~4.15 V; mapping "full" to 4150 mV lets a topped-off pack read 100%.
+    int pct = (mv - 3300) * 100 / (4150 - 3300);   // ~3.30 V empty .. 4.15 V full, approx LiPo
+    return pct < 0 ? 0 : pct > 100 ? 100 : pct;
+#else
+    return -1;
+#endif
+}
+// Largest scale (<= max) at which `txt` fits `width` px.
+static int fitScaleW(const std::string &txt, int max, int width) {
+    int sc = max; while (sc > 1 && (int)txt.size() * (PIXEL_FONT_WIDTH * sc + sc) > width) sc--; return sc;
+}
+static int s_batt_y = -1, s_batt_x = 0, s_batt_w = 0;   // idle-screen box for the battery line (-1 y = not drawn)
+static int64_t s_batt_next = 0;    // next refresh time (us)
+static void drawBattery(int y) {   // one line, refreshed in place: "BAT 87% USB"
+    if (y < 0 || y + 16 > s_screen_h) return;
+    int bx = s_batt_w > 0 ? s_batt_x : 0, bw = s_batt_w > 0 ? s_batt_w : s_screen_w;
+    bool usb = false; int pct = battPct(&usb);
+    char b[24];
+    if (pct < 0) { if (!usb) { fillRect(bx, y, bw, 16, C_BG); return; } snprintf(b, sizeof b, "USB"); }
+    else snprintf(b, sizeof b, "BAT %d%%%s", pct, usb ? " USB" : "");
+    uint16_t c = (pct >= 0 && pct <= 20) ? C_BAR : C_MUTED;
+    drawTextIn(bx, y, bw, b, fitScaleW("BAT 100% USB", 2, bw), c, C_BG);
+    s_batt_next = esp_timer_get_time() + 15000000;   // refresh every 15 s
+}
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+// Meta's Muse "typing" status sprite, played on the stick's idle screen. Same
+// frames and 130 ms cadence as Meta's boards, so it animates just as smoothly; we
+// render it here (musecorder owns the stick screen) instead of led_status's path.
+#define ANIM_SCALE 2
+#define ANIM_W (HAPPY_ANIM_WIDTH * ANIM_SCALE)    // 120
+#define ANIM_H (HAPPY_ANIM_HEIGHT * ANIM_SCALE)   // 120
+static int s_anim_x = 0, s_anim_y = 0, s_anim_frame = 0;
+static int64_t s_anim_next = 0;
+static void animDraw(int frame) {   // blit one scaled frame at (s_anim_x, s_anim_y), one sprite row per DMA
+    if (frame < 0 || frame >= HAPPY_ANIM_FRAMES) return;
+    const uint8_t *cells = happy_anim_frames[frame];
+    uint16_t row[ANIM_W * ANIM_SCALE];            // ANIM_SCALE output rows, pre-expanded
+    for (int cy = 0; cy < HAPPY_ANIM_HEIGHT; cy++) {
+        const uint8_t *src = cells + cy * HAPPY_ANIM_WIDTH;
+        for (int cx = 0; cx < HAPPY_ANIM_WIDTH; cx++) {   // palette is already panel byte-order
+            uint16_t px = happy_anim_palette[src[cx]];
+            for (int k = 0; k < ANIM_SCALE; k++) row[cx * ANIM_SCALE + k] = px;
+        }
+        for (int r = 1; r < ANIM_SCALE; r++) memcpy(row + r * ANIM_W, row, ANIM_W * sizeof(uint16_t));
+        mcDrawRect(s_anim_x, s_anim_y + cy * ANIM_SCALE, ANIM_W, ANIM_SCALE, row);
+    }
+    s_anim_next = esp_timer_get_time() + HAPPY_ANIM_FRAME_MS * 1000;
+}
+#endif
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+static int s_clock_x = 0, s_clock_w = 0, s_clock_y = -1;   // watch-face clock box (-1 y = not drawn)
+static int s_clock_min = -1;                               // last minute drawn, so we only repaint on a change
+static std::string nowClock() {   // "HH:MM" from the system clock (the Muse link sets it when online)
+    time_t t = time(nullptr); struct tm tm; localtime_r(&t, &tm);
+    char b[8]; snprintf(b, sizeof b, "%02d:%02d", tm.tm_hour, tm.tm_min); return b;
+}
+static void drawClock(int y) {
+    if (y < 0 || s_clock_w <= 0) return;
+    std::string clk = nowClock();
+    drawTextIn(s_clock_x, y, s_clock_w, clk, fitScaleW("00:00", 5, s_clock_w), C_BIG, C_BG);
+    time_t t = time(nullptr); struct tm tm; localtime_r(&t, &tm); s_clock_min = tm.tm_min;
+}
+static bool s_sntp_started = false;
+static void startClockSync() {   // real wall-clock time over Wi-Fi (NTP); the link doesn't set it
+    if (s_sntp_started) return;
+    s_sntp_started = true;
+    setenv("TZ", "MST7MDT,M3.2.0,M11.1.0", 1); tzset();   // US Mountain; change this string for another zone
+    esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    if (esp_netif_sntp_init(&cfg) == ESP_OK) logf("clock sync started (NTP, TZ Mountain)");
+    else logf("clock sync init failed");
+}
+#endif
+#if CONFIG_HOMEHUB_VOICE
+static int s_ptt_x = -1, s_ptt_y = 0, s_ptt_w = 0, s_ptt_h = 0;   // on-screen "Hold to Talk" button (set by drawIdle)
+static bool s_ptt_talking = false;                                // push-to-talk active (finger held on the button)
+#endif
 static void drawIdle() {   // musecorder's own idle screen; used in portrait, where Meta's animation only draws landscape
     s_launcher = false; s_hits.clear(); s_cleared = false; fillRect(0, 0, s_screen_w, s_screen_h, C_BG);
-    int cy = s_screen_h / 2;
-    drawText(cy - 34, "MUSECORDER", 3, C_BIG);
-    drawText(cy + 6, s_vm_up ? "Muse linked" : "connecting", 2, C_MUTED);
-    drawText(cy + 36, "tap for menu", 2, C_MUTED);
+    std::string status = s_vm_up ? "Muse linked" : "connecting";
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    if (s_screen_w > s_screen_h) {   // landscape (240x135 on the watch strap): a clean big-clock watch face
+        int cw = s_screen_w - 8;
+        int cs = fitScaleW("00:00", 6, cw), ss = fitScaleW(status, 1, cw);    // clock is the hero
+        int block = 8 * cs + 10 + 16 + 4 + 8 * ss;
+        int y = (s_screen_h - block) / 2; if (y < 2) y = 2;
+        s_clock_x = 4; s_clock_w = cw; s_clock_y = y; drawClock(y);           y += 8 * cs + 10;
+        s_batt_x = 4; s_batt_w = cw; s_batt_y = y; drawBattery(y);            y += 16 + 4;
+        drawTextIn(4, y, cw, status, ss, s_vm_up ? C_MUTED : C_BAR, C_BG);
+    } else {                         // portrait (135x240): animation hero on top
+        s_anim_x = (s_screen_w - ANIM_W) / 2; if (s_anim_x < 0) s_anim_x = 0;
+        s_anim_y = 18;
+        animDraw(s_anim_frame);
+        int st = fitScale(status, 2), hint = fitScale("hold side = menu", 1);
+        int y = s_anim_y + ANIM_H + 12;
+        drawText(y, status, st, s_vm_up ? C_BIG : C_MUTED);   y += 8 * st + 8;
+        drawText(y, "hold side = menu", hint, C_MUTED);       y += 8 * hint + 12;
+        s_batt_x = 0; s_batt_w = s_screen_w; s_batt_y = y; drawBattery(y);
+    }
+#elif CONFIG_HOMEHUB_VOICE
+    // Landscape touch board with voice (CYD28): title, status, an on-screen Hold-to-Talk
+    // button, then battery. Tap the title band for the menu; hold the button to talk.
+    int big = fitScale("MUSECORDER", 3), st = fitScale(status, 2), hint = fitScale("hold to talk  -  tap title for menu", 1);
+    int y = TOP_CLEAR + 12;
+    drawText(y, "MUSECORDER", big, C_BIG);            y += 8 * big + 10;
+    drawText(y, status, st, s_vm_up ? C_BIG : C_MUTED); y += 8 * st + 12;
+    { int bw = s_screen_w - 48, bx = 24; fillRect(bx, y, bw, BTN_H, C_BTN); drawTextIn(bx + 2, y + (BTN_H - 8 * 2) / 2, bw - 4, "Hold to Talk", 2, C_TEXT, C_BTN); s_ptt_x = bx; s_ptt_y = y; s_ptt_w = bw; s_ptt_h = BTN_H; y += BTN_H + 10; }
+    drawText(y, "hold to talk  -  tap title for menu", hint, C_MUTED); y += 8 * hint + 10;
+    s_batt_y = y; drawBattery(y);
+#else
+    int big = fitScale("MUSECORDER", 3), st = fitScale(status, 2), hint = fitScale("tap for menu", 2);
+    int y = s_screen_h / 2 - 8 * big - 12;
+    drawText(y, "MUSECORDER", big, C_BIG);            y += 8 * big + 12;
+    drawText(y, status, st, C_MUTED);                 y += 8 * st + 8;
+    drawText(y, "tap for menu", hint, C_MUTED);       y += 8 * hint + 14;
+    s_batt_y = y; drawBattery(y);
+#endif
     s_idle_shown = true;
 }
-static void showIdle() { if (s_rot) drawIdle(); else led_status_show_animation(); }
+#if CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+static void showIdle() { drawIdle(); }   // CYD28: always-on; draw our own idle (led_status_show_animation doesn't render on this backend, so the screen was blank until a touch)
+#else
+static void showIdle() { if (s_rot || s_screen_h > s_screen_w) drawIdle(); else led_status_show_animation(); }   // drawIdle for any portrait panel (native, like the StickS3, or rotated); Meta's animation only draws landscape
+#endif
 static void drawBar(int y, double frac, int h) {
     int x0 = 16, w = s_screen_w - 32, fill = (int)(w * (frac < 0 ? 0 : frac > 1 ? 1 : frac));
     fillRect(0, y, s_screen_w, h, C_BG); fillRect(x0, y, w, h, C_BAR_BG); if (fill > 0) fillRect(x0, y, fill, h, C_BAR);
@@ -475,6 +653,36 @@ static bool touchRaw() {
     int px = clampi(p[1] | (p[2] << 8), 0, pw - 1), py = clampi(p[3] | (p[4] << 8), 0, ph - 1);
     if (s_rot) { s_raw_x = py; s_raw_y = pw - 1 - px; } else { s_raw_x = pw - 1 - px; s_raw_y = ph - 1 - py; }   // landscape flipped 180 to match the panel mirror
     return true;
+}
+static void calDefault() { s_cal = {true, 0, 0, s_screen_w - 1, 0, s_screen_h - 1}; }
+#elif MC_TOUCH_FT6336
+// FocalTech FT6336 capacitive controller on I2C0 (SDA 16, SCL 15), address 0x38. Same
+// touch-data layout as the CST8xx: reg 0x02 = point count, then XH/XL/YH/YL with the
+// high nibble in the *H byte. IMPORTANT: do NOT drive the vendor-labeled RST/INT pins
+// (IO18/IO17) -- driving IO18 jams the controller (every register reads 0x00, even under
+// a steady press); the board's power-on reset is enough. Confirmed on hardware.
+static i2c_master_bus_handle_t s_tbus = nullptr; static i2c_master_dev_handle_t s_tdev = nullptr;
+static bool touchInit() {
+    // Do NOT drive IO18/IO17: with IO18 driven as an output (RST per the vendor pinout),
+    // every touch register read back 0x00 even under a steady press -- likely contention
+    // with the chip's own line if the pinout is wrong. Rely on the board's power-on reset.
+    vTaskDelay(pdMS_TO_TICKS(50));
+    s_tbus = (i2c_master_bus_handle_t)cyd28_i2c_bus();   // shared bus (the ES8311 codec is on it too); IO15 SCL / IO16 SDA
+    if (!s_tbus) return false;
+    i2c_device_config_t dc = {}; dc.dev_addr_length = I2C_ADDR_BIT_LEN_7; dc.device_address = 0x38; dc.scl_speed_hz = 100000;   // 100 kHz: tolerant of weak pull-ups (400 kHz gave intermittent all-zero reads)
+    if (i2c_master_bus_add_device(s_tbus, &dc, &s_tdev) != ESP_OK) return false;
+    uint8_t reg = 0xA3, id = 0;   // chip id (FT6336G ~ 0x64); log it, don't fail on the value
+    if (i2c_master_transmit_receive(s_tdev, &reg, 1, &id, 1, 50) != ESP_OK) { ESP_LOGW(TAG, "touch: no FT6336 at 0x38"); return false; }
+    ESP_LOGI(TAG, "FT6336 touch id 0x%02x", id);
+    return true;
+}
+static bool touchRaw() {
+    uint8_t reg = 0x02, b[5];
+    if (i2c_master_transmit_receive(s_tdev, &reg, 1, b, 5, 20) != ESP_OK) { if (s_touch_err++ % 200 == 0) ESP_LOGW(TAG, "ft6336 i2c read fail"); return false; }
+    if ((b[0] & 0x0F) != 1) return false;
+    int x = ((b[1] & 0x0F) << 8) | b[2], y = ((b[3] & 0x0F) << 8) | b[4];
+    if (x > 320 || y > 320) return false;   // raw is physical 240x320; the 3-tap wizard maps raw -> landscape screen
+    s_raw_x = x; s_raw_y = y; return true;
 }
 static void calDefault() { s_cal = {true, 0, 0, s_screen_w - 1, 0, s_screen_h - 1}; }
 #else   // no touch panel (joystick board): stubs so touchRead()/calLoad() still compile
@@ -622,6 +830,26 @@ static void doI2c(const char *op, cJSON *a) {   // i2c.scan{to} i2c.read{addr,re
     }
     i2c_master_bus_rm_device(d);
 }
+
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+// imu.read{to}: sample the BMI270 and publish accel (g), gyro (dps) and tilt angles.
+// Keys land under `to` (default "imu"): <to>.ax/.ay/.az, <to>.gx/.gy/.gz, <to>.pitch, <to>.roll.
+static void doImuRead(cJSON *a) {
+    std::string to = strOf(a, "to"); if (to.empty()) to = "imu";
+    if (!sticks3_imu_init()) { logf("imu: not available"); return; }
+    int16_t ac[3], gy[3];
+    if (!sticks3_imu_read(ac, gy)) { logf("imu: read failed"); return; }
+    double ax = ac[0] / 4096.0, ay = ac[1] / 4096.0, az = ac[2] / 4096.0;   // g, +/-8 g range
+    s_state[to + ".ax"] = Value::N(ax);
+    s_state[to + ".ay"] = Value::N(ay);
+    s_state[to + ".az"] = Value::N(az);
+    s_state[to + ".gx"] = Value::N(gy[0] / 16.384);   // dps, +/-2000 range
+    s_state[to + ".gy"] = Value::N(gy[1] / 16.384);
+    s_state[to + ".gz"] = Value::N(gy[2] / 16.384);
+    s_state[to + ".pitch"] = Value::N(atan2(ax, sqrt(ay * ay + az * az)) * 57.2957795);
+    s_state[to + ".roll"]  = Value::N(atan2(ay, az) * 57.2957795);
+}
+#endif
 
 
 // ---------------------------------------------------------------- microSD (mounted only while an action runs)
@@ -891,6 +1119,32 @@ static void doDrawText(cJSON *d) {   // draw.text{x?,y,text,scale,color}: x omit
     else { int x = (int)fromJson(xj).asNum(); int w = (int)t.size() * (PIXEL_FONT_WIDTH * scale + scale); drawTextIn(x, y, w, t, scale, c, C_BG); }
 }
 
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#define MC_IR_DEFAULT_PIN 46       // StickS3's on-board IR LED (on the PMIC 5 V rail)
+#else
+#define MC_IR_DEFAULT_PIN -1       // other boards: the applet must name a pin
+#endif
+static bool irArm(cJSON *x) {
+    int pin = (int)numOf(x, "pin", MC_IR_DEFAULT_PIN);
+    if (pin < 0) { logf("ir: set a pin"); return false; }
+    if (!musecorder_ir_ready() && !musecorder_ir_init(pin)) { logf("ir: init failed"); return false; }
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    sticks3_pmic_5v(true);         // the IR LED hangs off the switchable 5 V rail
+#endif
+    return true;
+}
+static void doIrNec(cJSON *x) {
+    if (!irArm(x)) return;
+    musecorder_ir_nec((uint8_t)(int)numOf(x, "addr", 0), (uint8_t)(int)numOf(x, "cmd", 0));
+}
+static void doIrRaw(cJSON *x) {
+    if (!irArm(x)) return;
+    cJSON *us = cJSON_GetObjectItem(x, "us"); if (!cJSON_IsArray(us)) return;
+    int n = cJSON_GetArraySize(us); if (n < 1 || n > 256) { logf("ir.raw: 1..256 values"); return; }
+    uint16_t *buf = (uint16_t *)malloc((size_t)n * sizeof(uint16_t)); if (!buf) return;
+    for (int i = 0; i < n; i++) buf[i] = (uint16_t)clampi((int)fromJson(cJSON_GetArrayItem(us, i)).asNum(), 0, 65535);
+    musecorder_ir_raw(buf, (size_t)n); free(buf);
+}
 static void runOne(cJSON *a, int depth) {
     if (!cJSON_IsObject(a) || depth > 6) return;
     if (cJSON *x = cJSON_GetObjectItem(a, "set")) { cJSON *it = nullptr; cJSON_ArrayForEach(it, x) s_state[it->string] = fromJson(it); s_dirty_screen = s_dirty_state = true; }
@@ -907,6 +1161,11 @@ static void runOne(cJSON *a, int depth) {
     if (cJSON *x = cJSON_GetObjectItem(a, "i2c.scan")) { doI2c("scan", x); s_dirty_screen = true; }
     if (cJSON *x = cJSON_GetObjectItem(a, "i2c.read")) { doI2c("read", x); s_dirty_screen = true; }
     if (cJSON *x = cJSON_GetObjectItem(a, "i2c.write")) doI2c("write", x);
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    if (cJSON *x = cJSON_GetObjectItem(a, "imu.read")) { doImuRead(x); s_dirty_screen = true; }
+#endif
+    if (cJSON *x = cJSON_GetObjectItem(a, "ir.nec")) doIrNec(x);
+    if (cJSON *x = cJSON_GetObjectItem(a, "ir.raw")) doIrRaw(x);
     if (cJSON *x = cJSON_GetObjectItem(a, "sd.append")) sdAppend(strOf(x, "file"), strOf(x, "text"));
     if (cJSON *x = cJSON_GetObjectItem(a, "sd.read")) { std::string to = strOf(x, "to"); s_state[to.empty() ? "sd" : to] = Value::S(sdTail(strOf(x, "file"), (size_t)numOf(x, "tail", 384))); s_dirty_screen = true; }
     if (cJSON *x = cJSON_GetObjectItem(a, "sd.fetch")) sdFetchStart(strOf(x, "path"), strOf(x, "file"));
@@ -935,12 +1194,14 @@ static void renderScreen() {
     if (!s_cleared) { clearRows(0, s_screen_h); s_cleared = true; }
     s_hits.clear(); s_canvas = false;
     int y = top + 8;
+    bool short_h = s_screen_h < 160;   // landscape StickS3 (~135 px tall): shrink title/text so more than one row fits
+    int tsc = short_h ? 2 : 3;         // title and plain-text scale
     cJSON *name = cJSON_GetObjectItem(s_app, "name");
-    drawText(y, cJSON_IsString(name) ? name->valuestring : s_app_id, 3, C_MUTED); y += 8 * 3 + 12;
+    drawText(y, cJSON_IsString(name) ? name->valuestring : s_app_id, tsc, C_MUTED); y += 8 * tsc + (short_h ? 6 : 12);
     cJSON *screen = cJSON_GetObjectItem(s_app, "screen"); cJSON *it = nullptr;
     cJSON_ArrayForEach(it, screen) {
         if (y >= bottom - 16) break;
-        if (cJSON *t = cJSON_GetObjectItem(it, "text")) { drawText(y, render(cJSON_GetStringValue(t)).asStr(), 3, C_TEXT); y += 8 * 3 + 10; }
+        if (cJSON *t = cJSON_GetObjectItem(it, "text")) { drawText(y, render(cJSON_GetStringValue(t)).asStr(), tsc, C_TEXT); y += 8 * tsc + (short_h ? 6 : 10); }
         else if (cJSON *b = cJSON_GetObjectItem(it, "big")) { std::string t = render(cJSON_GetStringValue(b)).asStr(); int sc = 8; while (sc > 3 && (int)t.size() * (PIXEL_FONT_WIDTH * sc + sc) > s_screen_w) sc--; if (sc < 8) clearRows(y, y + 64); drawText(y + (64 - 8 * sc) / 2, t, sc, C_BIG); y += 8 * 8 + 14; }
         else if (cJSON *bar = cJSON_GetObjectItem(it, "bar")) { double mx = cJSON_GetObjectItem(it, "max") ? fromJson(cJSON_GetObjectItem(it, "max")).asNum() : 100; drawBar(y, mx > 0 ? fromJson(bar).asNum() / mx : 0, 16); y += 16 + 12; }
         else if (cJSON *g = cJSON_GetObjectItem(it, "gap")) { y += (int)fromJson(g).asNum(); }
@@ -1022,10 +1283,34 @@ static bool startStored(const std::string &id, bool fresh) {
 #define MC_PIN_BL 27
 #endif
 static int s_bright = 100, s_off_min = 0;   // persisted in the applet partition as "cfg"
+static int s_dim_sec = 15;                  // watch mode: seconds of stillness before the screen dims (0 = never dim)
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#define MC_DIM_PCT 10                        // always-on dim backlight level for the watch face
+static int64_t s_imu_next = 0;              // next IMU poll (for raise-to-brighten)
+static int16_t s_imu_prev[3] = {0, 0, 0};
+static bool s_imu_tried = false;
+#endif
 static bool s_flip = false;                  // joystick/OLED board: screen + stick rotated 180 for upside-down mounting
 static bool s_bl_ready = false, s_dim = false, s_swallow = false; static int64_t s_last_touch_us = 0;
 static int s_menu = 0;   // 0 launcher, 1 settings
 static void blApply(int percent) {
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    // The stick's backlight is GPIO38 behind the PMIC (sticks3_lcd). MC_PIN_BL (27) is a
+    // CYD pin and on the S3 it collides with the octal PSRAM, which crashes the device —
+    // so route brightness to the real driver and never touch GPIO27 here.
+    sticks3_lcd_brightness(percent);
+    return;
+#elif CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+    cyd28_lcd_brightness(percent);   // backlight is GPIO45 via cyd28_lcd; MC_PIN_BL (27) is a PSRAM pin on the S3 -> crash/freeze
+    return;
+#elif CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB
+    // The 4827's backlight is GPIO2 (driven on by led_status.c at init). MC_PIN_BL (27) is an
+    // octal-PSRAM pin on this S3 board and the RGB framebuffer lives in that PSRAM: configuring
+    // LEDC on GPIO27 here corrupts the framebuffer stream and blanks the panel a moment after
+    // boot. Leave the backlight as led_status.c set it (always on) and never touch GPIO27.
+    (void)percent;
+    return;
+#endif
     if (!s_bl_ready) {
         ledc_timer_config_t tc = {}; tc.speed_mode = LEDC_LOW_SPEED_MODE; tc.timer_num = LEDC_TIMER_1; tc.duty_resolution = LEDC_TIMER_8_BIT; tc.freq_hz = 5000; tc.clk_cfg = LEDC_AUTO_CLK;
         if (ledc_timer_config(&tc) != ESP_OK) return;
@@ -1036,15 +1321,16 @@ static void blApply(int percent) {
     int d = percent <= 0 ? 0 : percent >= 100 ? 255 : 8 + percent * 247 / 100;
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_4, d); ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_4);
 }
+static bool s_cfg_present = false;   // true once a saved cfg has been read (so defaults only apply on a fresh device)
 static void cfgLoad() {   // the default NVS partition, so settings persist even on boards without the applets partition
     nvs_handle_t h; if (nvs_open("mc_cfg", NVS_READONLY, &h) != ESP_OK) return;
     char t[40] = {0}; size_t n = sizeof t;
-    if (nvs_get_str(h, "cfg", t, &n) == ESP_OK) { int b, o, r = 0, f = 0; int k = sscanf(t, "%d %d %d %d", &b, &o, &r, &f); if (k >= 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; if (k >= 3) s_rot = r ? 1 : 0; if (k >= 4) s_flip = f != 0; } }
+    if (nvs_get_str(h, "cfg", t, &n) == ESP_OK) { s_cfg_present = true; int b, o, r = 0, f = 0, d = 15; int k = sscanf(t, "%d %d %d %d %d", &b, &o, &r, &f, &d); if (k >= 2) { s_bright = b < 10 ? 10 : b > 100 ? 100 : b; s_off_min = o; if (k >= 3) s_rot = r < 0 ? 0 : r > 2 ? 2 : r; if (k >= 4) s_flip = f != 0; if (k >= 5) s_dim_sec = d < 0 ? 0 : d > 600 ? 600 : d; } }
     nvs_close(h);
 }
 static void cfgSave() {
     nvs_handle_t h; if (nvs_open("mc_cfg", NVS_READWRITE, &h) != ESP_OK) return;
-    char b[40]; snprintf(b, sizeof b, "%d %d %d %d", s_bright, s_off_min, s_rot, s_flip ? 1 : 0);
+    char b[48]; snprintf(b, sizeof b, "%d %d %d %d %d", s_bright, s_off_min, s_rot, s_flip ? 1 : 0, s_dim_sec);
     nvs_set_str(h, "cfg", b); nvs_commit(h); nvs_close(h);
 }
 static void screenWake() { if (s_dim) { s_dim = false; blApply(s_bright); } s_last_touch_us = esp_timer_get_time(); }
@@ -1056,7 +1342,7 @@ static void goToSleep() {   // screen off; a touch wakes it. (Deep sleep garbles
 
 // ---------------------------------------------------------------- launcher (tap the title, or the idle screen)
 static int64_t s_repair_until = 0;
-#if MC_JOYSTICK
+#if MC_JOYSTICK || MC_BTN_NAV
 static int s_sel = 0;
 static std::vector<std::pair<std::string, std::string>> s_items;   // (label, event) for joystick menus
 static void drawList(const char *title) {
@@ -1084,6 +1370,11 @@ static void launcherDraw() {
         s_items.push_back({label, "run:" + id}); any_applet = true;
     }
     if (!any_applet) s_items.push_back({"(no applets yet)", "noop"});
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    s_items.push_back({"TV Off (scan)", "tvscan"});   // brute-force common TV power codes (transmit only)
+    for (auto &id : irIds()) s_items.push_back({"IR " + id.substr(2), "irrun:" + id});   // id "ir1" -> "IR 1"
+    s_items.push_back({"Learn IR", "irlearn"});
+#endif
     s_items.push_back({s_running ? "Stop applet" : "Status", "status"});
     s_items.push_back({"Settings", "settings"});
     s_items.push_back({"Back", "back"});
@@ -1092,7 +1383,16 @@ static void launcherDraw() {
 static void settingsDraw() {
     s_hits.clear(); s_menu = 1; s_items.clear();
     bool arming = s_repair_until > esp_timer_get_time();
+    char bb[40]; snprintf(bb, sizeof bb, "Brightness %d%%", s_bright); s_items.push_back({bb, "bright"});
+#if MC_JOYSTICK
     s_items.push_back({s_flip ? "Flip: 180" : "Flip: normal", "flip"});
+#endif
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    s_items.push_back({s_rot ? "Go portrait" : "Go landscape", "orient"});   // portrait(0) <-> landscape(1)
+    if (s_rot) s_items.push_back({"Flip 180", "flipland"});                   // in landscape: pick which way is up (1 <-> 2)
+    { char db[28]; if (s_dim_sec == 0) snprintf(db, sizeof db, "Dim: never"); else snprintf(db, sizeof db, "Dim after %ds", s_dim_sec); s_items.push_back({db, "dim"}); }
+    if (!irIds().empty()) s_items.push_back({"Clear IR codes", "irclear"});   // wipe learned IR entries
+#endif
     s_items.push_back({musecorder_hid_mode_active() ? "Exit HID keyboard" : "HID keyboard mode", "hidmode"});
     s_items.push_back({"Reboot", "reboot"});
     s_items.push_back({arming ? "Re-pair: SURE?" : "Re-pair", "repair"});
@@ -1139,8 +1439,13 @@ static void settingsDraw() {
     s_menu = 1;
     char b[40]; std::vector<std::pair<std::string, std::string>> items;
     snprintf(b, sizeof b, "Brightness %d%%", s_bright); items.push_back({b, "bright"});
-    snprintf(b, sizeof b, "Screen off: %s", s_off_min == 0 ? "never" : s_off_min == 2 ? "2 min" : s_off_min == 10 ? "10 min" : "30 min"); items.push_back({b, "off"});
-    if (s_phys_w > s_phys_h) items.push_back({s_rot ? "Go landscape" : "Go portrait", "orient"});
+    snprintf(b, sizeof b, "Off: %s", s_off_min == 0 ? "never" : s_off_min == 2 ? "2m" : s_off_min == 10 ? "10m" : "30m"); items.push_back({b, "off"});
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    items.push_back({s_rot ? "Go portrait" : "Go landscape", "orient"});   // portrait(0) <-> landscape(1)
+    if (s_rot) items.push_back({"Flip 180", "flipland"});                   // in landscape: pick which way is up (1 <-> 2)
+#elif !CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB
+    if (s_phys_w > s_phys_h) items.push_back({s_rot ? "Go landscape" : "Go portrait", "orient"});   // the 4827 is fixed landscape (180 is a driver-side mirror), so it offers no orient toggle
+#endif
     items.push_back({musecorder_hid_mode_active() ? "Exit HID keyboard" : "HID keyboard mode", "hidmode"});
     items.push_back({"Reboot", "reboot"});
     items.push_back({"Sleep", "sleep"});
@@ -1153,6 +1458,88 @@ static void settingsDraw() {
 #endif  // MC_JOYSTICK
 static void launcherOpen() { s_launcher = true; s_idle_shown = false; s_repair_until = 0; launcherDraw(); ESP_LOGI(TAG, "launcher open"); }
 static void launcherClose() { s_launcher = false; s_hits.clear(); s_cleared = false; if (s_running) s_dirty_screen = true; else showIdle(); }
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#define MC_IR_RX_PIN 42   // StickS3's IR receiver output (demodulated envelope)
+static void doIrLearn() {   // capture a real remote's button and save it to the next IR slot
+    // The StickS3's IR receiver module is fed by the PMIC's switchable 5 V ext rail
+    // (M5's own example: "Enable external power output for IR receiver module"); the
+    // display bring-up leaves it off, so without this the demodulator is dark and
+    // GPIO42 never sees a pulse -> every capture times out as "no signal".
+    // Bring the TX LED up first so GPIO46 is driven to its idle (LED off) level. The
+    // 5 V rail below powers both the TX LED and the receiver; an uncontrolled GPIO46
+    // can leave the LED emitting into the adjacent receiver, swamping it with noise.
+    if (!musecorder_ir_ready()) musecorder_ir_init(MC_IR_DEFAULT_PIN);
+    sticks3_pmic_5v(true);
+    vTaskDelay(pdMS_TO_TICKS(120));   // let the demodulator power up and settle
+    bool rdy = musecorder_ir_rx_ready();
+    ESP_LOGW(TAG, "irlearn: rx_ready=%d", (int)rdy);
+    if (!rdy && !musecorder_ir_rx_init(MC_IR_RX_PIN)) {
+        ESP_LOGW(TAG, "irlearn: rx_init FAILED");
+        sticks3_pmic_5v(false);
+        clearRows(0, s_screen_h); drawText(s_screen_h / 2, "IR RX fail", 2, C_BAR); vTaskDelay(pdMS_TO_TICKS(1200)); launcherDraw(); return;
+    }
+    clearRows(0, s_screen_h);
+    int y = s_screen_h / 2 - 18;
+    drawText(y, "Point remote", fitScale("Point remote", 2), C_TEXT);
+    drawText(y + 22, "press a button", fitScale("press a button", 2), C_MUTED);
+    uint16_t buf[128]; size_t n = 0;
+    ESP_LOGW(TAG, "irlearn: capturing (8 s)...");
+    bool ok = musecorder_ir_capture(buf, 128, &n, 8000);
+    ESP_LOGW(TAG, "irlearn: capture ok=%d edges=%u", (int)ok, (unsigned)n);
+    sticks3_pmic_5v(false);   // done listening; drop the rail (its default state)
+    clearRows(0, s_screen_h);
+    if (!ok) { drawText(s_screen_h / 2, "no signal", 3, C_BAR); vTaskDelay(pdMS_TO_TICKS(1200)); launcherDraw(); return; }
+    std::string csv; char t[8];
+    for (size_t i = 0; i < n; i++) { if (i) csv += ","; snprintf(t, sizeof t, "%u", buf[i]); csv += t; }
+    auto ids = irIds();
+    int slot = 1; while (slot <= 20) { std::string cand = "ir" + std::to_string(slot); bool used = false; for (auto &i : ids) if (i == cand) used = true; if (!used) break; slot++; }
+    std::string id = "ir" + std::to_string(slot);
+    storeSet(key("ir.", id).c_str(), csv.c_str());
+    ids.push_back(id); irSetIds(ids);
+    logf("IR learned %s (%u edges)", id.c_str(), (unsigned)n);
+    drawText(s_screen_h / 2, "learned!", 3, C_BIG); vTaskDelay(pdMS_TO_TICKS(900));
+    launcherDraw();
+}
+static void doIrRun(const std::string &id) {   // replay a learned code
+    char *csv = storeGet(key("ir.", id).c_str(), 2048);
+    if (!csv) { launcherDraw(); return; }
+    std::vector<uint16_t> d; char *p = csv;
+    while (*p) { long v = strtol(p, &p, 10); d.push_back((uint16_t)(v < 0 ? 0 : v > 65535 ? 65535 : v)); if (*p == ',') p++; else if (*p) break; }
+    free(csv);
+    clearRows(0, s_screen_h); drawText(s_screen_h / 2, "sending", 3, C_MUTED);
+    if (!musecorder_ir_ready()) musecorder_ir_init(MC_IR_DEFAULT_PIN);
+    sticks3_pmic_5v(true);
+    bool ok = !d.empty() && musecorder_ir_raw(d.data(), d.size());
+    sticks3_pmic_5v(false);
+    clearRows(0, s_screen_h); drawText(s_screen_h / 2, ok ? "sent" : "send fail", 3, ok ? C_BIG : C_BAR);
+    vTaskDelay(pdMS_TO_TICKS(600)); launcherDraw();
+}
+// Brute-force TV power: fire common power codes in turn until one turns the TV off
+// (how TV-B-Gone / universal remotes work). Uses only the transmitter, so it does
+// not depend on the IR receiver. Starter set — expand per the user's TV brand.
+static const uint32_t TV_POWER[] = {
+    0xE0E040BF,   // Samsung  power (toggle)
+    0xE0E019E6,   // Samsung  power off
+    0x20DF10EF,   // LG       power (toggle)
+    0x20DFA35C,   // LG       power off
+};
+static void doTvScan() {
+    if (!musecorder_ir_ready()) musecorder_ir_init(MC_IR_DEFAULT_PIN);
+    sticks3_pmic_5v(true);
+    int n = (int)(sizeof(TV_POWER) / sizeof(TV_POWER[0]));
+    for (int i = 0; i < n; i++) {
+        clearRows(0, s_screen_h);
+        char b[20]; snprintf(b, sizeof b, "TV %d/%d", i + 1, n);
+        drawText(s_screen_h / 2 - 8, b, 3, C_MUTED);
+        musecorder_ir_nec32(TV_POWER[i]);
+        logf("tvscan sent 0x%08X", (unsigned)TV_POWER[i]);
+        vTaskDelay(pdMS_TO_TICKS(400));   // give the TV time to react between codes
+    }
+    sticks3_pmic_5v(false);
+    clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 8, "done", 3, C_BIG);
+    vTaskDelay(pdMS_TO_TICKS(700)); launcherDraw();
+}
+#endif
 static void launcherTap(const std::string &ev) {
     ESP_LOGI(TAG, "launcher: %s", ev.c_str());
     if (ev == "back") launcherClose();
@@ -1162,6 +1549,7 @@ static void launcherTap(const std::string &ev) {
     else if (ev == "launcher") launcherDraw();
     else if (ev == "bright") { s_bright = s_bright > 60 ? 60 : s_bright > 30 ? 30 : s_bright > 10 ? 10 : 100; blApply(s_bright); cfgSave(); settingsDraw(); }
     else if (ev == "off") { s_off_min = s_off_min == 0 ? 2 : s_off_min == 2 ? 10 : s_off_min == 10 ? 30 : 0; cfgSave(); settingsDraw(); }
+    else if (ev == "dim") { s_dim_sec = s_dim_sec == 15 ? 30 : s_dim_sec == 30 ? 60 : s_dim_sec == 60 ? 0 : 15; s_dim = false; blApply(s_bright); s_last_touch_us = esp_timer_get_time(); cfgSave(); settingsDraw(); }
     else if (ev == "flip") {
 #if MC_JOYSTICK
         s_flip = !s_flip; ssd1306_set_flip(s_flip); cfgSave(); ESP_LOGI(TAG, "flip %d", (int)s_flip); settingsDraw();
@@ -1169,7 +1557,14 @@ static void launcherTap(const std::string &ev) {
     }
     else if (ev == "reboot") { clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rebooting", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(300)); blApply(0); esp_restart(); }
     else if (ev == "orient") { s_rot = !s_rot; cfgSave(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, "rotating", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(400)); blApply(0); esp_restart(); }
+    else if (ev == "flipland") { s_rot = s_rot == 2 ? 1 : 2; cfgSave(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, "flipping", 3, C_MUTED); vTaskDelay(pdMS_TO_TICKS(400)); blApply(0); esp_restart(); }
     else if (ev == "sleep") goToSleep();
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    else if (ev == "irlearn") doIrLearn();
+    else if (ev == "tvscan") doTvScan();
+    else if (ev == "irclear") { irSetIds(std::vector<std::string>()); s_sel = 0; settingsDraw(); }
+    else if (!ev.compare(0, 6, "irrun:")) doIrRun(ev.substr(6));
+#endif
     else if (ev == "calibrate") { if (s_touch_ok) wizStart(); }
     else if (ev == "hidmode") { bool on = !musecorder_hid_mode_active(); clearRows(0, s_screen_h); drawText(s_screen_h / 2, on ? "entering HID mode" : "back to Muse", 2, C_TEXT); vTaskDelay(pdMS_TO_TICKS(400)); musecorder_hid_set_mode(on); }
     else if (ev == "repair") {   // two taps within 8 s: the same as holding BOOT for 5 s (erase pairing, reboot into setup)
@@ -1179,6 +1574,22 @@ static void launcherTap(const std::string &ev) {
     else if (ev == "status") { if (s_running) { storeSet("run", nullptr); stopApplet(false); } launcherClose(); }
     else if (!ev.compare(0, 4, "run:")) { std::string id = ev.substr(4); s_launcher = false; s_hits.clear(); if (!(s_running && id == s_app_id)) { if (!startStored(id, false)) { logf("launch %s failed", id.c_str()); launcherClose(); } } else launcherClose(); }
 }
+
+#if MC_JOYSTICK || MC_BTN_NAV
+// ---------------------------------------------------------------- cursor menu navigation (no touch panel)
+static void navMove(int delta) {
+    int n = (int)s_items.size(); if (n <= 0) return;
+    s_sel = ((s_sel + delta) % n + n) % n;
+    if (s_menu == 1) settingsDraw(); else launcherDraw();
+}
+static void navSelect() {
+    int n = (int)s_items.size(); if (s_sel < 0 || s_sel >= n) return;
+    std::string ev = s_items[s_sel].second;
+    if (ev == "settings" || ev == "launcher") s_sel = 0;   // a different menu: cursor to top
+    launcherTap(ev);
+    if (s_launcher) { int m = (int)s_items.size(); s_sel = clampi(s_sel, 0, m - 1); }
+}
+#endif
 
 #if MC_JOYSTICK
 // ---------------------------------------------------------------- joystick navigation (no touch)
@@ -1194,18 +1605,6 @@ static void joyInit() {
     adc_oneshot_config_channel(s_adc, JOY_VRY_CH, &cc);
     gpio_reset_pin((gpio_num_t)JOY_SW_PIN); gpio_set_direction((gpio_num_t)JOY_SW_PIN, GPIO_MODE_INPUT); gpio_set_pull_mode((gpio_num_t)JOY_SW_PIN, GPIO_PULLUP_ONLY);
     s_joy_ready = true; ESP_LOGI(TAG, "joystick ready (VRx GPIO1, VRy GPIO2, SW GPIO5)");
-}
-static void navMove(int delta) {
-    int n = (int)s_items.size(); if (n <= 0) return;
-    s_sel = ((s_sel + delta) % n + n) % n;
-    if (s_menu == 1) settingsDraw(); else launcherDraw();
-}
-static void navSelect() {
-    int n = (int)s_items.size(); if (s_sel < 0 || s_sel >= n) return;
-    std::string ev = s_items[s_sel].second;
-    if (ev == "settings" || ev == "launcher") s_sel = 0;   // a different menu: cursor to top
-    launcherTap(ev);
-    if (s_launcher) { int m = (int)s_items.size(); s_sel = clampi(s_sel, 0, m - 1); }
 }
 static void navClose() {
     if (s_menu == 1) { s_sel = 0; launcherDraw(); }   // in settings: go back to the launcher
@@ -1257,9 +1656,68 @@ static void joyTick() {
 }
 #endif  // MC_JOYSTICK
 
+#if MC_BTN_NAV
+// ---------------------------------------------------------------- button navigation (M5StickS3: blue=select, side=down)
+#define MC_BTN_DOWN_GPIO 12                 // KEY2, the right side button
+static volatile bool s_blue_down = false;   // blue (GPIO11) physically held, set by pressCb
+static volatile int64_t s_blue_since = 0;   // when the current blue press began (us)
+static volatile bool s_blue_tap = false;    // a completed short tap, awaiting its action
+static bool s_down_prev = false, s_down_long = false;
+static int64_t s_down_since = 0;
+#if CONFIG_HOMEHUB_VOICE
+static bool s_talking = false;              // push-to-talk active: blue held past the threshold
+#define MC_PTT_HOLD_US 350000               // hold blue ~0.35 s to start talking to Muse
+#endif
+static void btnNavInit() {
+    gpio_reset_pin((gpio_num_t)MC_BTN_DOWN_GPIO);
+    gpio_set_direction((gpio_num_t)MC_BTN_DOWN_GPIO, GPIO_MODE_INPUT);
+    gpio_set_pull_mode((gpio_num_t)MC_BTN_DOWN_GPIO, GPIO_PULLUP_ONLY);
+    ESP_LOGI(TAG, "button nav ready (blue GPIO11 = select, side GPIO%d = down)", MC_BTN_DOWN_GPIO);
+}
+static void btnNavTick() {
+    int64_t now = esp_timer_get_time();
+    if (s_blue_down || gpio_get_level((gpio_num_t)MC_BTN_DOWN_GPIO) == 0) {   // any button held: brighten + stay awake
+        if (s_dim) { s_dim = false; blApply(s_bright); }
+        s_last_touch_us = now;
+    }
+#if CONFIG_HOMEHUB_VOICE
+    if (s_blue_down && !s_talking && now - s_blue_since > MC_PTT_HOLD_US) {   // blue held: start talking
+        s_talking = true; s_blue_tap = false;
+        clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 8, "listening", 3, C_BIG);
+        ESP_LOGW(TAG, "voice: ptt start");
+        voice_ptt(true);
+    } else if (s_talking && !s_blue_down) {                                   // blue released: send the clip
+        s_talking = false; ESP_LOGW(TAG, "voice: ptt stop"); voice_ptt(false);
+        clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 8, "sent", 3, C_MUTED);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        if (s_launcher) launcherDraw(); else if (s_running) s_dirty_screen = true; else showIdle();
+    }
+#endif
+    if (s_blue_tap) {                        // a completed short blue tap (not a hold)
+        s_blue_tap = false;
+        if (s_launcher) navSelect();
+        else if (!s_running) { if (link_pairing_confirmation_required()) app_touch_short_press(); else { s_sel = 0; launcherOpen(); } }
+        else s_tap_pending = true;           // applet running: boot:press
+    }
+    bool down = gpio_get_level((gpio_num_t)MC_BTN_DOWN_GPIO) == 0;
+    if (down && !s_down_prev) { s_down_since = now; s_down_long = false; }        // press begins
+    else if (down && !s_down_long && now - s_down_since > 700000) {               // held ~0.7 s: open the menu from anywhere, including a running applet (the way out)
+        s_down_long = true; s_sel = 0; launcherOpen();
+    } else if (!down && s_down_prev && !s_down_long) {                            // short tap
+        if (s_launcher) navMove(1);
+        else if (!s_running) { s_sel = 0; launcherOpen(); }
+        else fire("btn:down");
+    }
+    s_down_prev = down;
+}
+#endif  // MC_BTN_NAV
+
 // ---------------------------------------------------------------- touch dispatch
 static bool s_down = false, s_wiz_wait_up = false, s_held = false; static int s_dx = 0, s_dy = 0, s_ox = 0, s_oy = 0, s_down_n = 0, s_up_n = 0;
 static void onTap(int x, int y) {
+#if CONFIG_HOMEHUB_VOICE
+    if (!s_launcher && !s_running && s_ptt_x >= 0 && x >= s_ptt_x && x < s_ptt_x + s_ptt_w && y >= s_ptt_y && y < s_ptt_y + s_ptt_h) return;   // quick tap on the Talk button (not a hold): ignore
+#endif
     if (s_launcher) { for (auto &h : s_hits) if (x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h) { launcherTap(h.ev); return; } return; }
     if (!s_running) { if (link_pairing_confirmation_required()) { ESP_LOGI(TAG, "touch confirms pairing"); app_touch_short_press(); } else launcherOpen(); return; }
     for (auto &h : s_hits) if (x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h) { if (!h.ev.empty()) fire(h.ev.c_str()); return; }
@@ -1284,6 +1742,15 @@ static void touchTick() {
         s_dx = x; s_dy = y;
         bool moved = abs(x - s_ox) > 15 || abs(y - s_oy) > 15;   // a drag (sketching) is not a hold
         if (moved) s_held = true;   // and stays no-hold until the finger lifts
+#if CONFIG_HOMEHUB_VOICE
+        if (!s_launcher && !s_running && !s_ptt_talking && s_ptt_x >= 0
+            && s_ox >= s_ptt_x && s_ox < s_ptt_x + s_ptt_w && s_oy >= s_ptt_y && s_oy < s_ptt_y + s_ptt_h
+            && s_down_n >= 350 / MC_TICK_MS) {   // held ~0.35 s on the Talk button: start recording
+            s_ptt_talking = true; s_held = true;   // s_held blocks the launcher-open path below
+            clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 12, "listening", 3, C_BIG);
+            ESP_LOGW(TAG, "voice: ptt start"); voice_ptt(true);
+        }
+#endif
         if (!s_held && s_down_n >= 1000 / MC_TICK_MS && !s_launcher) {   // held still for a second: the launcher, from any screen
             s_held = true; bool onButton = false;
             for (auto &h : s_hits) if (x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h) onButton = true;
@@ -1293,6 +1760,21 @@ static void touchTick() {
     } else if (s_down) {
         if (++s_up_n < 3) return;   // resistive contact flickers: the pen is up only after 3 quiet ticks (150 ms)
         s_down = false;
+#if CONFIG_HOMEHUB_VOICE
+        if (s_ptt_talking) {   // Talk button released: send the clip to Muse
+            s_ptt_talking = false; s_held = false;
+            ESP_LOGW(TAG, "voice: ptt stop"); voice_ptt(false);
+            char sb[24];
+#if CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+            snprintf(sb, sizeof sb, "sent (mic %d)", voice_board_cyd28_peak());   // TEMP: 0 = dead mic, small = low gain
+#else
+            snprintf(sb, sizeof sb, "sent");
+#endif
+            clearRows(0, s_screen_h); drawText(s_screen_h / 2 - 12, sb, 2, C_MUTED);
+            vTaskDelay(pdMS_TO_TICKS(900)); showIdle();
+            return;
+        }
+#endif
         bool dragged = abs(s_dx - s_ox) > 15 || abs(s_dy - s_oy) > 15;
         if (s_held) { s_held = false; if (!dragged) return; }   // a finished hold is not a tap; a finished drag still reports touch
         if (s_down_n + 1 >= MC_TAP_SAMPLES) onTap(s_dx, s_dy);
@@ -1342,6 +1824,9 @@ static void tickTask(void *) {
 #if MC_JOYSTICK
         joyTick();
 #endif
+#if MC_BTN_NAV
+        btnNavTick();
+#endif
         if (s_tone_on && now >= s_tone_until) toneNext(now);
         if (s_running) {
             for (auto &t : s_timers) if (now >= t.next) { t.next = now + (int64_t)t.period_ms * 1000; fire(t.key); }
@@ -1354,7 +1839,32 @@ static void tickTask(void *) {
                 if (s_dirty_state && now - s_last_save > 2000000) saveState();
             }
         } else s_tap_pending = false;
-        if (s_rot && !s_running && !s_launcher && s_wiz < 0 && !s_idle_shown) drawIdle();
+        bool own_idle = s_rot || s_screen_h > s_screen_w;
+#if CONFIG_HOMEHUB_LED_BACKEND_CYD28_ILI9341
+        own_idle = true;   // CYD28 is landscape but draws its OWN idle (with the Talk button), not Meta's led_status animation
+#endif
+        if (own_idle && !s_running && !s_launcher && s_wiz < 0) {
+            if (!s_idle_shown) drawIdle();
+            else {
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+                // Watch mode: raise-to-brighten (IMU), always-on dim, and a clock.
+                if (now >= s_imu_next) {
+                    s_imu_next = now + 200000;   // poll at 5 Hz
+                    if (!s_imu_tried) { s_imu_tried = true; if (sticks3_imu_init()) logf("IMU ready (wrist-wake)"); else logf("IMU unavailable"); }
+                    int16_t a[3];
+                    if (sticks3_imu_read(a, nullptr)) {
+                        long motion = labs(a[0] - s_imu_prev[0]) + labs(a[1] - s_imu_prev[1]) + labs(a[2] - s_imu_prev[2]);
+                        s_imu_prev[0] = a[0]; s_imu_prev[1] = a[1]; s_imu_prev[2] = a[2];
+                        if (motion > 2500) { if (s_dim) { s_dim = false; blApply(s_bright); } s_last_touch_us = now; }   // wrist moved: wake/keep bright
+                    }
+                }
+                if (!s_dim && s_dim_sec > 0 && now - s_last_touch_us > (int64_t)s_dim_sec * 1000000LL) { s_dim = true; blApply(MC_DIM_PCT); }   // dim (never fully off)
+                if (!s_dim && s_screen_h > s_screen_w && now >= s_anim_next) { s_anim_frame = (s_anim_frame + 1) % HAPPY_ANIM_FRAMES; animDraw(s_anim_frame); }   // portrait only; animate only while bright
+                if (s_clock_y >= 0) { struct tm tm; time_t t = time(nullptr); localtime_r(&t, &tm); if (tm.tm_min != s_clock_min) drawClock(s_clock_y); }
+#endif
+                if (s_batt_y >= 0 && now >= s_batt_next) drawBattery(s_batt_y);   // live % refresh
+            }
+        }
         xSemaphoreGive(s_lock);
     }
 }
@@ -1365,7 +1875,14 @@ extern "C" void musecorder_init(void) {
     if (!led_status_display_info(&s_phys_w, &s_phys_h)) { s_phys_w = s_phys_h = 0; }
     storeInit();
     cfgLoad();
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    if (!s_cfg_present) s_rot = 1;   // fresh StickS3 (watch) defaults to landscape; once chosen, portrait(0)/landscape(1,2) are respected
+#else
     if (s_phys_w <= s_phys_h) s_rot = 0;   // rotation only makes sense on a landscape-native panel
+#endif
+#if CONFIG_HOMEHUB_LED_BACKEND_4827S043_RGB
+    s_rot = 0;   // the 4827 is a fixed landscape install; its 180 flip lives in the panel driver (mirror), never in s_rot. Force native landscape so a stale or mis-tapped rotation in cfg can't strand it in portrait with an offset touch map.
+#endif
     if (s_phys_w > 0) { s_screen_w = s_rot ? s_phys_h : s_phys_w; s_screen_h = s_rot ? s_phys_w : s_phys_h; }
     else s_screen_w = 0;
     s_touch_ok = s_screen_w > 0 && touchInit();
@@ -1374,18 +1891,39 @@ extern "C" void musecorder_init(void) {
     joyInit();
     ssd1306_set_flip(s_flip);   // apply the saved 180 orientation to the OLED
 #endif
+#if MC_BTN_NAV
+    btnNavInit();
+#endif
     if (s_bright < 100) blApply(s_bright);
     s_last_touch_us = esp_timer_get_time();
     button_set_press_cb(pressCb);
     xTaskCreate(tickTask, "musecorder", 6144, nullptr, 3, nullptr);
     ESP_LOGI(TAG, "ready (%dx%d, touch %s, store %s)", s_screen_w, s_screen_h, s_touch_ok ? "yes" : "no", s_store_ok ? "ok" : "none");
 }
-extern "C" void musecorder_vm_connected(void) { s_vm_up = true; s_vm_gen = s_vm_gen + 1; s_idle_shown = false; }
+extern "C" void musecorder_vm_connected(void) { s_vm_up = true; s_vm_gen = s_vm_gen + 1; s_idle_shown = false;
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+    startClockSync();   // Wi-Fi is up by now; sync the watch clock over NTP
+#endif
+}
 extern "C" void musecorder_session_starved(void) { s_starved = true; }
 extern "C" void musecorder_screen_reset(void) { s_cleared = false; s_dirty_screen = true; if (s_launcher) s_launcher = false; }
 static bool pressCb(bool pressed) {
-    if (s_running && pressed) s_tap_pending = true;   // instant boot:press for the applet
+#if MC_BTN_NAV
+    // Blue button: record the edges; btnNavTick decides tap vs hold from the timing.
+    // A quick tap selects/confirms; a hold (> MC_PTT_HOLD_US) is push-to-talk.
+    if (pressed) { s_blue_down = true; s_blue_since = esp_timer_get_time(); return true; }
+    s_blue_down = false;
+#if CONFIG_HOMEHUB_VOICE
+    if (!s_talking) s_blue_tap = true;   // released without talking -> it was a tap
+#else
+    s_blue_tap = true;                   // no voice build: every release is a tap
+#endif
+    return true;                         // claim the blue press so the link layer does not also retry Wi-Fi
+#else
+    if (!pressed) return false;
+    if (s_running) s_tap_pending = true;   // instant boot:press for the applet
     return false;   // not claimed: a 5 s hold still resets setup (re-pair, new Wi-Fi) while an applet runs
+#endif
 }
 extern "C" bool musecorder_on_tap(void) {
     return s_running;   // the press callback already queued it; skip Meta's (idle) short-press handling

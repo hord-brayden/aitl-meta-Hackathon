@@ -21,6 +21,11 @@ void musecorder_screen_reset(void);                          // the status scree
 bool musecorder_console_command(const char *line);           // serial ">wifi=..." lines (sdk_token_console.c hands over what it does not own)
 
 // Command descriptions advertised to Muse in link.register (keep the total under 8 KB).
+#if CONFIG_HOMEHUB_LED_BACKEND_STICKS3_ST7789
+#define MC_SCREEN_NOTE "Screen is a small colour LCD with NO touch, worn on a watch strap: 135 wide x 240 tall in portrait, or 240 wide x 135 tall if the user switched to landscape, so keep layouts to a few short centered lines rather than fixed pixel positions. Input is two buttons: the big front button fires boot:press, the side button fires btn:down; the user holds the side button to open the launcher. Design for buttons - put actions under on:{boot:press} and on:{btn:down}; on-screen touch buttons do nothing here. Keep text scale 1-2 (big up to 3). Up to 5 applets are stored and survive reboot; list state keys under 'persist' to keep their values across restarts. IR remote: ir.nec/ir.raw default to pin 46. IMU: imu.read{to} fills <to>.ax/.ay/.az (g), <to>.gx/.gy/.gz (deg/s) and <to>.pitch/.roll (deg) from the 6-axis sensor - good for tilt, taps and gestures (default to 'imu')."
+#else
+#define MC_SCREEN_NOTE "Screen 320x480 (y 28-452 usable); a 1 s finger hold opens the launcher."
+#endif
 #define MUSECORDER_INSTALL_DESC \
     "Install and run a small JSON tool (applet) on this gadget's touchscreen; json = the applet object (under 4 KB; up to 5 stay stored, id alone restarts a stored one). Example: " \
     "{\"id\":\"tally\",\"name\":\"Door Tally\",\"state\":{\"n\":0},\"persist\":[\"n\"]," \
@@ -30,9 +35,10 @@ bool musecorder_console_command(const char *line);           // serial ">wifi=..
     "Events: start, stop, boot:press, touch (sets touch.x touch.y; also touch:move), every:SECONDS, gpio:PIN:rise|fall|change (pins 4 16 17 21 22 25 26 32 34-39), custom names via applet.event. " \
     "Actions: set{k:v}, inc/dec/toggle k, log, if{if,then,else}, exit, led #rrggbb, tone{freq|freq:[..],ms}, pwm{pin,duty,freq}, gpio.write{pin,value}, gpio.read{pin,to}, adc.read{pin,to} (36 39 32 34 35), " \
     "i2c.scan{to}, i2c.read{addr,reg|cmd:[..],wait,len,to} (bytes land in to.0..to.n), i2c.write{addr,reg|cmd,data,wait} (wait = ms pause; pins from applet i2c{sda,scl}, the 4-pin header is sda 32 scl 25), " \
+    "ir.nec{addr,cmd,pin}, ir.raw{us:[mark,space,...],pin} (38 kHz IR remote; on the StickS3 the IR LED is pin 46 and its 5 V rail powers on automatically), " \
     "draw.rect{x,y,w,h,color}, draw.text{x,y,text,scale,color}, clear, sd.append{file,text}, sd.read{file,to,tail}, sd.draw{file}, sd.fetch{path,file} (microSD), " \
     "muse.say \"text\" (posts into your chat with this Muse), muse.ask{text,to}, http{method,url,json,to} (little RAM), vm.write{path,text,append} (needs scope). " \
-    "${expr}: state keys, math, comparisons, functions len int floor ceil round abs min max pad(x,w,fill) mmss(seconds)=m:ss hhmmss clock random(lo,hi) uptime time. The name is the title. Screen 320x480 (y 28-452 usable); a 1 s finger hold opens the launcher."
+    "${expr}: state keys, math, comparisons, functions len int floor ceil round abs min max pad(x,w,fill) mmss(seconds)=m:ss hhmmss clock random(lo,hi) uptime time. The name is the title. " MC_SCREEN_NOTE
 #define MUSECORDER_REMOVE_DESC "Stop the running applet and bring back the status screen (it stays stored). id: delete that stored applet. all:true deletes every stored applet."
 #define MUSECORDER_STATE_DESC \
     "Read the running applet: id, state, last log lines, stored ids, free RAM. set: an object of state keys to assign first; doc:true also returns the applet JSON (edit and reinstall); calibrate:true runs the touch setup."

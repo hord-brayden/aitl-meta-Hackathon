@@ -1,0 +1,29 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Name,    Type, SubType, Offset,   Size,    Flags
+# LCD Wiki 2.8" ESP32-S3 Display (16 MB flash) — Meta's dual-OTA layout with the
+# Musecorder "applets" NVS partition added (same split as partitions_sticks3.csv),
+# scaled to 16 MB. "applets" is its own NVS partition so applets never share pages
+# with Meta's pairing data; the applet store, launcher and persistence need it.
+# nvs/otadata/phy_init keep their original offsets so BLE bonds and Wi-Fi creds
+# survive a reflash. Dual 5 MB OTA app slots (app is ~1.8 MB) leave ample room.
+nvs,       data, nvs,     0x11000,  0xC000,
+otadata,   data, ota,     0x1D000,  0x2000,
+phy_init,  data, phy,     0x1F000,  0x1000,
+ota_0,     app,  ota_0,   0x20000,  0x500000,
+ota_1,     app,  ota_1,   0x520000, 0x500000,
+applets,   data, nvs,     0xA20000, 0x40000,
+prod_data, data, 0x40,    0xA60000, 0x1000,
+prod_bak,  data, 0x41,    0xA61000, 0x1000,
