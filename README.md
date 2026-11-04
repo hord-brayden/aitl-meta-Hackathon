@@ -1,5 +1,7 @@
 # Musecorder
 
+[Submission Youtube Demo Link - YouTube.com](https://www.youtube.com/watch?v=zKPqE2b4lBI)
+
 ### A Muse tricorder: an ESP32 touchscreen your Muse pairs with from the phone app and **recodes in seconds** for whatever job is in front of you. No reflash, no API key, no laptop.
 
 *AITL (AI In The Loop) · Caeruli Obscuri Laboratorium · built for the Meta Global AI Developer Hackathon, October 2026*
